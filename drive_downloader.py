@@ -4,6 +4,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 import json
 import re
+import tempfile
+
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parent
@@ -22,8 +25,60 @@ def download_exam_file(exam_id):
     if not exam.get("driveUrl"):
         raise ValueError("Google Driveリンクが登録されていません。")
 
+    if exam.get("pageGroup"):
+        return download_page_group(exams, exam)
+
+    content, filename = download_drive_content(exam["driveUrl"])
+    filename = filename or default_filename(exam)
+    target = unique_target_path(FILES_DIR / safe_path_part(filename))
+    FILES_DIR.mkdir(exist_ok=True)
+    target.write_bytes(content)
+
+    exam["localFile"] = f"./files/{target.name}"
+    DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"localFile": exam["localFile"]}
+
+
+def download_page_group(exams, exam):
+    page_group = exam["pageGroup"]
+    pages = [item for item in exams if item.get("pageGroup") == page_group and item.get("driveUrl")]
+    pages.sort(key=lambda item: (int(item.get("pageNumber") or 0), item.get("id", "")))
+    if not pages:
+        raise ValueError("ページ結合対象が見つかりません。")
+
+    FILES_DIR.mkdir(exist_ok=True)
+    target = unique_target_path(FILES_DIR / safe_path_part(default_filename(exam)))
+    if target.suffix.lower() != ".pdf":
+        target = target.with_suffix(".pdf")
+
+    images = []
     try:
-        drive_url = build_drive_download_url(exam["driveUrl"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for index, page in enumerate(pages, start=1):
+                content, filename = download_drive_content(page["driveUrl"])
+                suffix = Path(filename or page.get("driveUrl", "")).suffix or ".img"
+                page_path = Path(tmpdir) / f"page-{index}{suffix}"
+                page_path.write_bytes(content)
+                image = Image.open(page_path).convert("RGB")
+                images.append(image)
+
+            if not images:
+                raise ValueError("PDF化するページ画像がありません。")
+            images[0].save(target, save_all=True, append_images=images[1:])
+    finally:
+        for image in images:
+            image.close()
+
+    local_file = f"./files/{target.name}"
+    for page in pages:
+        page["localFile"] = local_file
+    DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"localFile": local_file}
+
+
+def download_drive_content(drive_url):
+    try:
+        drive_url = build_drive_download_url(drive_url)
         opener = build_opener(HTTPCookieProcessor())
         response = open_drive_url(opener, drive_url)
         response = follow_drive_confirm_if_needed(opener, response)
@@ -33,15 +88,7 @@ def download_exam_file(exam_id):
 
     if not content:
         raise ValueError("Driveから空のファイルが返されました。")
-
-    filename = response_filename(response) or default_filename(exam)
-    target = unique_target_path(FILES_DIR / safe_path_part(filename))
-    FILES_DIR.mkdir(exist_ok=True)
-    target.write_bytes(content)
-
-    exam["localFile"] = f"./files/{target.name}"
-    DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"localFile": exam["localFile"]}
+    return content, response_filename(response)
 
 
 def read_exams():
