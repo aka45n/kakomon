@@ -31,6 +31,7 @@ class KakomonApp(tk.Tk):
         self.test_type_vars = {test_type: tk.BooleanVar(value=False) for test_type in TEST_TYPES}
         self.status_var = tk.StringVar(value="準備中")
         self.local_file_var = tk.StringVar(value="ローカルファイル: 未選択")
+        self.source_site_var = tk.StringVar(value="取得元: 未選択")
         self.notes_var = tk.StringVar(value="注釈: 未選択")
 
         self.create_widgets()
@@ -91,7 +92,7 @@ class KakomonApp(tk.Tk):
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
-        columns = ("year", "subject", "teacher", "group", "test_type", "file_state", "notes")
+        columns = ("year", "subject", "teacher", "group", "test_type", "source_site", "file_state", "notes")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
         headings = {
             "year": "年度",
@@ -99,6 +100,7 @@ class KakomonApp(tk.Tk):
             "teacher": "教師名",
             "group": "群",
             "test_type": "種別",
+            "source_site": "取得元",
             "file_state": "ファイル",
             "notes": "注釈",
         }
@@ -108,8 +110,9 @@ class KakomonApp(tk.Tk):
             "teacher": 130,
             "group": 80,
             "test_type": 95,
+            "source_site": 110,
             "file_state": 130,
-            "notes": 260,
+            "notes": 220,
         }
         for column in columns:
             self.tree.heading(column, text=headings[column])
@@ -136,7 +139,8 @@ class KakomonApp(tk.Tk):
         detail_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         detail_frame.columnconfigure(0, weight=1)
         ttk.Label(detail_frame, textvariable=self.local_file_var, wraplength=760).grid(row=0, column=0, sticky="w")
-        ttk.Label(detail_frame, textvariable=self.notes_var, wraplength=760).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(detail_frame, textvariable=self.source_site_var, wraplength=760).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(detail_frame, textvariable=self.notes_var, wraplength=760).grid(row=2, column=0, sticky="w", pady=(4, 0))
 
     def add_labeled_entry(self, parent, label, variable, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w")
@@ -222,7 +226,6 @@ class KakomonApp(tk.Tk):
             "group",
             "testType",
             "localFile",
-            "driveUrl",
             "notes",
         )).lower()
 
@@ -246,6 +249,7 @@ class KakomonApp(tk.Tk):
                     exam.get("teacher", ""),
                     exam.get("group", ""),
                     exam.get("testType", ""),
+                    exam.get("sourceSite", ""),
                     "ローカル保存済み" if exam.get("localFile") else "Drive参照" if exam.get("driveUrl") else "未登録",
                     exam.get("notes", ""),
                 ),
@@ -265,6 +269,7 @@ class KakomonApp(tk.Tk):
         selection = self.tree.selection()
         if not selection:
             self.local_file_var.set("ローカルファイル: 未選択")
+            self.source_site_var.set("取得元: 未選択")
             self.notes_var.set("注釈: 未選択")
             return
 
@@ -273,8 +278,10 @@ class KakomonApp(tk.Tk):
             return
 
         local_file = exam.get("localFile") or "なし"
+        source_site = exam.get("sourceSite") or "なし"
         notes = exam.get("notes") or "なし"
         self.local_file_var.set(f"ローカルファイル: {local_file}")
+        self.source_site_var.set(f"取得元: {source_site}")
         self.notes_var.set(f"注釈: {notes}")
 
     def open_preferred(self):
