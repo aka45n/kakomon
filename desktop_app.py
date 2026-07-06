@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -10,7 +11,25 @@ import webbrowser
 from drive_downloader import DATA_PATH, ROOT, download_exam_file
 
 
-TEST_TYPES = ("小テスト", "定期テスト")
+TEST_TYPES = ("小テスト", "定期テスト", "過去問")
+MISSING_LOCAL_FILE_VALUES = ("", "未保存", None)
+
+
+def year_sort_value(value):
+    match = re.match(r"^(\d{4})(前期|後期)?$", str(value))
+    if not match:
+        return (0, 0)
+    semester_order = {"前期": 1, "後期": 2}
+    return (int(match.group(1)), semester_order.get(match.group(2), 0))
+
+
+def reverse_year_sort_value(value):
+    year, semester = year_sort_value(value)
+    return (-year, -semester)
+
+
+def has_local_file(exam):
+    return exam.get("localFile") not in MISSING_LOCAL_FILE_VALUES
 
 
 class KakomonApp(tk.Tk):
@@ -169,7 +188,7 @@ class KakomonApp(tk.Tk):
         self.status_var.set("データを読み込みました")
 
     def refresh_filter_options(self):
-        self.year_combo["values"] = [""] + sorted(self.unique_values("year"), key=lambda value: int(value), reverse=True)
+        self.year_combo["values"] = [""] + sorted(self.unique_values("year"), key=year_sort_value, reverse=True)
         self.teacher_combo["values"] = [""] + sorted(self.unique_values("teacher"))
         self.subject_combo["values"] = [""] + sorted(self.unique_values("subject"))
         self.group_combo["values"] = [""] + sorted(self.unique_values("group"))
@@ -197,9 +216,9 @@ class KakomonApp(tk.Tk):
         ]
         self.filtered.sort(key=self.sort_key, reverse=self.sort_var.get() == "年度が新しい順")
         if self.sort_var.get() == "科目名順":
-            self.filtered.sort(key=lambda exam: (exam.get("subject", ""), -int(exam.get("year", 0))))
+            self.filtered.sort(key=lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", ""))))
         elif self.sort_var.get() == "教師名順":
-            self.filtered.sort(key=lambda exam: (exam.get("teacher", ""), -int(exam.get("year", 0))))
+            self.filtered.sort(key=lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", ""))))
 
         self.render_table()
 
@@ -230,11 +249,7 @@ class KakomonApp(tk.Tk):
         )).lower()
 
     def sort_key(self, exam):
-        try:
-            year = int(exam.get("year", 0))
-        except ValueError:
-            year = 0
-        return (year, exam.get("subject", ""))
+        return (year_sort_value(exam.get("year", "")), exam.get("subject", ""))
 
     def render_table(self):
         self.tree.delete(*self.tree.get_children())
@@ -250,7 +265,7 @@ class KakomonApp(tk.Tk):
                     exam.get("group", ""),
                     exam.get("testType", ""),
                     exam.get("sourceSite", ""),
-                    "ローカル保存済み" if exam.get("localFile") else "Drive参照" if exam.get("driveUrl") else "未登録",
+                    "ローカル保存済み" if has_local_file(exam) else "Drive参照" if exam.get("driveUrl") else "未登録",
                     exam.get("notes", ""),
                 ),
             )
@@ -277,7 +292,7 @@ class KakomonApp(tk.Tk):
         if not exam:
             return
 
-        local_file = exam.get("localFile") or "なし"
+        local_file = exam.get("localFile") if has_local_file(exam) else "なし"
         source_site = exam.get("sourceSite") or "なし"
         notes = exam.get("notes") or "なし"
         self.local_file_var.set(f"ローカルファイル: {local_file}")
@@ -288,7 +303,7 @@ class KakomonApp(tk.Tk):
         exam = self.selected_exam()
         if not exam:
             return
-        if exam.get("localFile"):
+        if has_local_file(exam):
             self.open_path(exam["localFile"])
         elif exam.get("driveUrl"):
             webbrowser.open(exam["driveUrl"])
@@ -297,7 +312,7 @@ class KakomonApp(tk.Tk):
 
     def open_local_file(self):
         exam = self.selected_exam()
-        if exam and exam.get("localFile"):
+        if exam and has_local_file(exam):
             self.open_path(exam["localFile"])
         elif exam:
             messagebox.showinfo("過去問検索", "ローカルファイルは未保存です。")
