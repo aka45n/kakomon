@@ -27,6 +27,7 @@ COURSE_GROUPS = (
     "キャリア形成科目群",
     "統合科学科目群",
     "少人数教育科目群",
+    "工学部専門科目",
 )
 MISSING_LOCAL_FILE_VALUES = ("", "未保存", None)
 
@@ -104,6 +105,35 @@ def exam_rule_filename(subject, teacher, year, suffix, test_type="", test_number
     if test_type == "小テスト" and test_number:
         number_part = f"_小テスト{safe_rule_filename_text(test_number)}"
     return f"{subject}({teacher}){year}{number_part}{suffix.lower()}"
+
+
+def downloaded_rule_filename(subject, teacher, year, suffix, test_type="", test_number="", source_site=""):
+    suffix = suffix or ".pdf"
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+    subject = safe_rule_filename_text(subject) or "過去問"
+    teacher = safe_rule_filename_text(clean_teacher_name(teacher))
+    year = safe_rule_filename_text(year)
+    test_label = safe_rule_filename_text(test_type_filename_label(test_type, test_number))
+    source_label = safe_rule_filename_text(source_site_filename_label(source_site))
+    test_part = f"_{test_label}" if test_label else ""
+    source_part = f"_{source_label}" if source_label else ""
+    return f"{subject}({teacher}){year}{test_part}{source_part}{suffix.lower()}"
+
+
+def source_site_filename_label(source_site):
+    labels = {
+        "京大wiki": "KUwiki",
+        "KU1025": "KU1025",
+    }
+    return labels.get(str(source_site).strip(), source_site)
+
+
+def test_type_filename_label(test_type, test_number=""):
+    test_type = str(test_type or "").strip()
+    if test_type == "小テスト" and test_number:
+        return f"小テスト{test_number}"
+    return test_type
 
 
 def display_test_type(exam):
@@ -195,6 +225,27 @@ class KakomonApp(tk.Tk):
                 shutil.copyfile(seed, target)
             else:
                 target.write_text(default_content, encoding="utf-8")
+        self.merge_seed_exams()
+
+    def merge_seed_exams(self):
+        if not SEED_ROOT:
+            return
+        seed_path = SEED_ROOT / "data" / "exams.json"
+        target_path = ROOT / "data" / "exams.json"
+        if not seed_path.exists() or not target_path.exists():
+            return
+        try:
+            seed_exams = json.loads(seed_path.read_text(encoding="utf-8"))
+            current_exams = json.loads(target_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return
+        existing_ids = {exam.get("id") for exam in current_exams}
+        missing = [exam for exam in seed_exams if exam.get("id") and exam.get("id") not in existing_ids]
+        if not missing:
+            return
+        current_exams.extend(missing)
+        current_exams.sort(key=lambda item: (item.get("subject", ""), item.get("year", ""), item.get("teacher", ""), item.get("id", "")))
+        target_path.write_text(json.dumps(current_exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def create_widgets(self):
         self.columnconfigure(0, weight=0)
@@ -558,6 +609,23 @@ class KakomonApp(tk.Tk):
 
         self.after_idle(apply_focus)
 
+    def close_dialog(self, window):
+        if window and window.winfo_exists():
+            window.destroy()
+        self.after_idle(self.restore_main_focus)
+
+    def restore_main_focus(self):
+        if not self.winfo_exists():
+            return
+        self.lift()
+        self.focus_force()
+        if self.landing_frame.winfo_ismapped():
+            self.focus_landing_search()
+        elif self.tree.get_children():
+            self.focus_results_table(select_first=False)
+        else:
+            self.focus_set()
+
     def selected_exam(self):
         selection = self.tree.selection()
         if not selection:
@@ -681,6 +749,7 @@ class KakomonApp(tk.Tk):
         window.columnconfigure(0, weight=1)
         window.transient(self)
         window.lift()
+        window.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog(window))
 
         form = ttk.Frame(window, padding=16)
         form.grid(row=0, column=0, sticky="nsew")
@@ -721,7 +790,7 @@ class KakomonApp(tk.Tk):
             text="追加",
             command=lambda: self.add_exam(values, notes, window),
         ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(button_frame, text="キャンセル", command=window.destroy).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(button_frame, text="キャンセル", command=lambda: self.close_dialog(window)).grid(row=0, column=1, sticky="ew", padx=(6, 0))
         self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry)
         values["testType"].trace_add(
             "write",
@@ -903,7 +972,7 @@ class KakomonApp(tk.Tk):
             self.apply_filters()
         self.status_var.set("過去問を追加しました")
         messagebox.showinfo("過去問検索", "過去問を追加しました。")
-        window.destroy()
+        self.close_dialog(window)
 
     def open_edit_exam_dialog(self, exam=None):
         exam = exam or self.selected_exam()
@@ -917,6 +986,7 @@ class KakomonApp(tk.Tk):
         window.columnconfigure(0, weight=1)
         window.transient(self)
         window.lift()
+        window.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog(window))
 
         form = ttk.Frame(window, padding=16)
         form.grid(row=0, column=0, sticky="nsew")
@@ -956,7 +1026,7 @@ class KakomonApp(tk.Tk):
         ttk.Button(button_frame, text="保存", command=lambda: self.save_exam_edits(exam, values, notes, window)).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         if self.is_manual_exam(exam):
             ttk.Button(button_frame, text="削除", command=lambda: self.delete_manual_exam(exam, window)).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(button_frame, text="キャンセル", command=window.destroy).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        ttk.Button(button_frame, text="キャンセル", command=lambda: self.close_dialog(window)).grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
         self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry, row=7)
         values["testType"].trace_add(
@@ -1027,7 +1097,7 @@ class KakomonApp(tk.Tk):
             self.apply_filters()
         self.status_var.set("過去問を編集しました")
         messagebox.showinfo("過去問検索", "過去問を編集しました。")
-        window.destroy()
+        self.close_dialog(window)
 
     def renamed_local_file_for_edit(self, exam, subject, teacher, year, test_type, test_number):
         current_path = local_file_path(exam)
@@ -1038,7 +1108,19 @@ class KakomonApp(tk.Tk):
         except ValueError:
             return ""
         suffix = current_path.suffix or ".pdf"
-        target_path = FILES_DIR / exam_rule_filename(subject, teacher, year, suffix, test_type, test_number)
+        if self.is_manual_exam(exam):
+            target_name = exam_rule_filename(subject, teacher, year, suffix, test_type, test_number)
+        else:
+            target_name = downloaded_rule_filename(
+                subject,
+                teacher,
+                year,
+                suffix,
+                test_type,
+                test_number,
+                exam.get("sourceSite", ""),
+            )
+        target_path = FILES_DIR / target_name
         if current_path.resolve() == target_path.resolve():
             return ""
         if target_path.exists():
@@ -1076,7 +1158,7 @@ class KakomonApp(tk.Tk):
             self.apply_filters()
         self.status_var.set("過去問を削除しました")
         messagebox.showinfo("過去問検索", "過去問を削除しました。")
-        window.destroy()
+        self.close_dialog(window)
 
     def open_detail_page(self, exam=None):
         exam = exam or self.selected_exam()
@@ -1091,6 +1173,7 @@ class KakomonApp(tk.Tk):
         window.rowconfigure(1, weight=1)
         window.transient(self)
         window.lift()
+        window.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog(window))
 
         header = ttk.Frame(window, padding=16)
         header.grid(row=0, column=0, sticky="ew")
@@ -1164,7 +1247,7 @@ class KakomonApp(tk.Tk):
             command=lambda: self.download_exam_from_detail(exam, window),
             state=download_state,
         ).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(actions, text="閉じる", command=window.destroy).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(actions, text="閉じる", command=lambda: self.close_dialog(window)).grid(row=0, column=4, padx=(0, 8))
         window.after_idle(lambda: (window.focus_force(), new_feedback.focus_set()) if window.winfo_exists() else None)
 
     def detail_feedback_text(self, exam_id):
@@ -1283,7 +1366,7 @@ class KakomonApp(tk.Tk):
         self.apply_filters()
         self.status_var.set("保存しました")
         messagebox.showinfo("過去問検索", f"ローカルに保存しました。\n{local_file}")
-        window.destroy()
+        self.close_dialog(window)
 
     def open_preferred(self):
         exam = self.selected_exam()

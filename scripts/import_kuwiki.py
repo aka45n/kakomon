@@ -83,8 +83,8 @@ REPORT_PATTERNS = (
 IGNORE_FILENAME_PREFIXES = (
     "中国語の世界",
 )
-FRONT_TERM_SUFFIXES = ("A", "１", "1", "Ⅰ", "I")
-BACK_TERM_SUFFIXES = ("B", "２", "2", "Ⅱ", "II")
+FRONT_TERM_SUFFIXES = ("A", "Ⅰ", "I")
+BACK_TERM_SUFFIXES = ("B", "Ⅱ", "II")
 COURSE_GROUP_MAP = {
     "全学：自然": "自然群",
     "理：物理": "自然群",
