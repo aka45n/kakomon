@@ -219,10 +219,29 @@ def exam_filename(exam, suffix=None):
     suffix = suffix or ".pdf"
     if not suffix.startswith("."):
         suffix = f".{suffix}"
+    source_site = safe_filename_text(source_site_filename_label(exam.get("sourceSite", "")))
     subject = safe_filename_text(exam.get("subject") or exam.get("id") or "過去問")
     teacher = safe_filename_text(clean_teacher_name(exam.get("teacher", "")))
     year = safe_filename_text(exam.get("year", ""))
-    return f"{subject}({teacher}){year}{suffix.lower()}"
+    test_type = safe_filename_text(test_type_filename_label(exam))
+    test_part = f"_{test_type}" if test_type else ""
+    source_part = f"_{source_site}" if source_site else ""
+    return f"{subject}({teacher}){year}{test_part}{source_part}{suffix.lower()}"
+
+
+def source_site_filename_label(source_site):
+    labels = {
+        "京大wiki": "KUwiki",
+        "KU1025": "KU1025",
+    }
+    return labels.get(str(source_site).strip(), source_site)
+
+
+def test_type_filename_label(exam):
+    test_type = str(exam.get("testType") or "").strip()
+    if test_type == "小テスト" and exam.get("testNumber"):
+        return f"小テスト{exam.get('testNumber')}"
+    return test_type
 
 
 def clean_teacher_name(value):
