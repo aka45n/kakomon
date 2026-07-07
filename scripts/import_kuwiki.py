@@ -74,6 +74,41 @@ IGNORE_FILENAME_PREFIXES = (
 )
 FRONT_TERM_SUFFIXES = ("A", "１", "1", "Ⅰ", "I")
 BACK_TERM_SUFFIXES = ("B", "２", "2", "Ⅱ", "II")
+COURSE_GROUP_MAP = {
+    "全学：自然": "自然群",
+    "理：物理": "自然群",
+    "工：物工": "自然群",
+    "理：化学": "自然群",
+    "理：生物": "自然群",
+    "理：数学": "自然群",
+    "理：地物": "自然群",
+    "工：共通": "自然群",
+    "理：境界": "自然群",
+    "理：宇物": "自然群",
+    "理：地鉱": "自然群",
+    "工：地球工": "自然群",
+    "工：工化": "自然群",
+    "農：森林": "自然群",
+    "農：応生": "自然群",
+    "工：電電": "自然群",
+    "農：資源": "自然群",
+    "農：共通": "自然群",
+    "工：建築": "自然群",
+    "農：食品": "自然群",
+    "全学：人社": "人社群",
+    "教育：教職": "人社群",
+    "法：法": "人社群",
+    "総人：総人": "人社群",
+    "文：文": "人社群",
+    "経済：経済": "人社群",
+    "教育：現教": "人社群",
+    "全学：外国語": "外国語群",
+    "全学：健康": "健康群",
+    "全学：情報": "情報群",
+    "工：情報": "情報群",
+    "全学：キャリア": "キャリア形成科目群",
+    "全学：統合": "統合科学科目群",
+}
 NO_YEAR_TRAILING_MARKERS = (
     "",
     "前期",
@@ -94,6 +129,10 @@ NO_YEAR_TRAILING_MARKERS = (
     "a",
     "b",
 )
+
+
+def course_group(value: str) -> str:
+    return COURSE_GROUP_MAP.get(value, value)
 NO_YEAR_EXCLUDED_PATTERNS = (
     "解答",
     "解説",
@@ -265,7 +304,7 @@ def fetch_courses(terms: tuple[str, ...] | list[str]) -> list[dict]:
 def report_course(course: dict) -> dict:
     return {
         "name": course.get("name") or "未登録",
-        "field": course.get("field") or "未登録",
+        "field": course_group(course.get("field") or "未登録"),
         "code": course.get("code") or "未登録",
     }
 
@@ -591,8 +630,8 @@ def build_exam(course: dict, file_item: dict, parsed: dict) -> dict:
         "year": parsed["year"],
         "teacher": parsed["teacher"],
         "subject": parsed["subject"],
-        "group": course.get("field", ""),
-        "testType": parsed.get("testType", "過去問"),
+        "group": course_group(course.get("field", "")),
+        "testType": parsed.get("testType", "定期テスト"),
         "sourceSite": "京大wiki",
         "localFile": "未保存",
         "driveUrl": file_item["url"],

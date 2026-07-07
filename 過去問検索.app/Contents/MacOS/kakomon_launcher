@@ -1,0 +1,18 @@
+#!/bin/sh
+APP_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+RESOURCE_ROOT="$(cd "$(dirname "$0")/../Resources" && pwd)"
+LOG_FILE="$APP_ROOT/kakomon_app.log"
+PYTHON="/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"
+cd "$RESOURCE_ROOT" || exit 1
+export KAKOMON_ROOT="$HOME/Library/Application Support/Kakomon"
+export KAKOMON_SEED_ROOT="$RESOURCE_ROOT"
+{
+  echo "==== $(date) ===="
+  echo "APP_ROOT=$APP_ROOT"
+  echo "RESOURCE_ROOT=$RESOURCE_ROOT"
+  echo "KAKOMON_ROOT=$KAKOMON_ROOT"
+  echo "PATH=$PATH"
+  echo "PYTHON=$PYTHON"
+  /usr/bin/arch -arm64 "$PYTHON" --version
+} >> "$LOG_FILE" 2>&1
+exec /usr/bin/arch -arm64 "$PYTHON" "$RESOURCE_ROOT/desktop_app.py" >> "$LOG_FILE" 2>&1
