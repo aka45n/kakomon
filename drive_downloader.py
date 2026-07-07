@@ -6,6 +6,7 @@ import json
 import os
 import re
 import ssl
+import sys
 import tempfile
 
 
@@ -45,8 +46,6 @@ def download_exam_file(exam_id):
 
 
 def download_page_group(exams, exam):
-    from PIL import Image
-
     page_group = exam["pageGroup"]
     pages = [item for item in exams if item.get("pageGroup") == page_group and item.get("driveUrl")]
     pages.sort(key=lambda item: (int(item.get("pageNumber") or 0), item.get("id", "")))
@@ -58,29 +57,89 @@ def download_page_group(exams, exam):
     if target.suffix.lower() != ".pdf":
         target = target.with_suffix(".pdf")
 
-    images = []
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for index, page in enumerate(pages, start=1):
-                content, filename = download_drive_content(page["driveUrl"])
-                suffix = Path(filename or page.get("driveUrl", "")).suffix or ".img"
-                page_path = Path(tmpdir) / f"page-{index}{suffix}"
-                page_path.write_bytes(content)
-                image = Image.open(page_path).convert("RGB")
-                images.append(image)
-
-            if not images:
-                raise ValueError("PDF化するページ画像がありません。")
-            images[0].save(target, save_all=True, append_images=images[1:])
-    finally:
-        for image in images:
-            image.close()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        page_paths = []
+        for index, page in enumerate(pages, start=1):
+            content, filename = download_drive_content(page["driveUrl"])
+            suffix = Path(filename or "").suffix.lower()
+            if not suffix:
+                suffix = suffix_from_url(page.get("driveUrl", "")) or ".bin"
+            page_path = Path(tmpdir) / f"page-{index}{suffix}"
+            page_path.write_bytes(content)
+            page_paths.append(page_path)
+        combine_page_files(page_paths, target)
 
     local_file = f"./files/{target.name}"
     for page in pages:
         page["localFile"] = local_file
     DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"localFile": local_file}
+
+
+def combine_page_files(page_paths, target):
+    suffixes = [path.suffix.lower() for path in page_paths]
+    if all(suffix in (".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff") for suffix in suffixes):
+        save_images_as_pdf(page_paths, target)
+        return
+
+    pdf_paths = []
+    for path in page_paths:
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            pdf_paths.append(path)
+        elif suffix in (".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff"):
+            image_pdf_path = path.with_suffix(".pdf")
+            save_images_as_pdf([path], image_pdf_path)
+            pdf_paths.append(image_pdf_path)
+        else:
+            raise ValueError(f"PDF結合に対応していないファイル形式です: {suffix or '不明'}")
+    merge_pdfs(pdf_paths, target)
+
+
+def save_images_as_pdf(image_paths, target):
+    from PIL import Image
+
+    images = []
+    try:
+        for path in image_paths:
+            images.append(Image.open(path).convert("RGB"))
+        if not images:
+            raise ValueError("PDF化するページ画像がありません。")
+        images[0].save(target, save_all=True, append_images=images[1:])
+    finally:
+        for image in images:
+            image.close()
+
+
+def merge_pdfs(pdf_paths, target):
+    PdfReader, PdfWriter = import_pypdf()
+    writer = PdfWriter()
+    for path in pdf_paths:
+        reader = PdfReader(str(path))
+        for page in reader.pages:
+            writer.add_page(page)
+    with target.open("wb") as output:
+        writer.write(output)
+
+
+def import_pypdf():
+    try:
+        from pypdf import PdfReader, PdfWriter
+
+        return PdfReader, PdfWriter
+    except ModuleNotFoundError:
+        bundled_python_packages = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "python"
+        if bundled_python_packages.exists():
+            sys.path.append(str(bundled_python_packages))
+            from pypdf import PdfReader, PdfWriter
+
+            return PdfReader, PdfWriter
+        raise ValueError("PDFページの結合には pypdf が必要です。") from None
+
+
+def suffix_from_url(url):
+    suffix = Path(urlparse(url).path).suffix.lower()
+    return suffix if suffix else ""
 
 
 def download_drive_content(drive_url):

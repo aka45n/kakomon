@@ -31,6 +31,15 @@ SUPPORTED_EXTENSIONS = (
     ".html",
     ".pptx",
 )
+IMAGE_EXTENSIONS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".tif",
+    ".tiff",
+)
+PAGE_GROUP_EXTENSIONS = IMAGE_EXTENSIONS + (".pdf",)
 MATERIAL_PATTERNS = (
     "講義ノート",
     "講義資料",
@@ -55,6 +64,9 @@ MATERIAL_PATTERNS = (
     "PyMol実習",
     "講義で用いた図",
     "講義で用いた図",
+    "課題",
+    "対策",
+    "宿題",
 )
 MATERIAL_FILENAME_PATTERNS = (
     r"^append\d*\.pdf$",
@@ -97,6 +109,7 @@ COURSE_GROUP_MAP = {
     "農：食品": "自然群",
     "全学：人社": "人社群",
     "教育：教職": "人社群",
+    "教育：心理": "人社群",
     "法：法": "人社群",
     "総人：総人": "人社群",
     "文：文": "人社群",
@@ -173,6 +186,11 @@ REGULAR_TEST_MARKERS = (
     "試験問題",
     "試験",
 )
+PAGE_BASE_TERM_OVERRIDES = {
+    "基礎物理化学(熱力学)(渡邊)2016": "",
+    "基礎物理化学(量子論)(渡邊)2016": "",
+    "量子物理学(中家)2016": "後期",
+}
 
 DEFAULT_TERMS = (
     "数学",
@@ -258,10 +276,15 @@ def main() -> None:
         if not files:
             continue
 
+        paged_parses = clear_paged_file_parses(files, course["name"])
         for file_item in files:
             if is_ignored_file(file_item["name"]):
                 continue
-            parsed_items = parse_exam_filename(file_item["name"], course["name"])
+            parsed_items = (
+                paged_parses.get(file_item["id"])
+                or parse_folder_path_filename(file_item, course["name"])
+                or parse_exam_filename(file_item["name"], course["name"])
+            )
             if not parsed_items:
                 unresolved.append(
                     {
@@ -395,7 +418,11 @@ def parse_exam_filename(filename: str, course_name: str) -> dict | None:
         return special
     year_match = re.search(r"((?:19|20)\d{2})(前期|後期)?$", stem)
     if not year_match:
-        return parse_typed_exam_filename(stem, course_name) or parse_no_year_filename(stem, course_name)
+        return (
+            parse_year_not_at_end_filename(stem, course_name)
+            or parse_typed_exam_filename(stem, course_name)
+            or parse_no_year_filename(stem, course_name)
+        )
 
     before_year = stem[: year_match.start()].strip()
     teacher = ""
@@ -408,7 +435,10 @@ def parse_exam_filename(filename: str, course_name: str) -> dict | None:
         if subject_from_file:
             subject = subject_from_file
 
-    year = year_match.group(1) + (year_match.group(2) or infer_term_from_subject(subject))
+    term = year_match.group(2) or infer_term_from_subject(subject)
+    if not term:
+        return None
+    year = year_match.group(1) + term
     return {"year": year, "teacher": teacher, "subject": subject}
 
 
@@ -423,10 +453,15 @@ def is_report_file(filename: str) -> bool:
 
 
 def is_ignored_file(filename: str) -> bool:
+    if filename == "中国語2B(黄明月)2020中間課題.pdf":
+        return False
     return filename.startswith(IGNORE_FILENAME_PREFIXES) or is_material_file(filename) or is_report_file(filename)
 
 
 def parse_special_filename(stem: str, course_name: str):
+    if stem == "中国語2B(黄明月)2020中間課題":
+        return {"year": "2020後期", "teacher": "黄明月", "subject": "中国語2B", "testType": "小テスト"}
+
     if stem == "哲学2(戸田)201_":
         return {"year": "", "teacher": "戸田", "subject": "哲学2"}
 
@@ -469,6 +504,105 @@ def parse_special_filename(stem: str, course_name: str):
         ]
 
     return None
+
+
+def clear_paged_file_parses(files: list[dict], course_name: str) -> dict[str, dict]:
+    candidates = []
+    for file_item in files:
+        path = Path(file_item["name"])
+        if path.suffix.lower() not in PAGE_GROUP_EXTENSIONS:
+            continue
+        match = page_suffix_match(path.with_suffix("").name.strip()) or trailing_page_suffix_match(path.with_suffix("").name.strip())
+        if not match:
+            continue
+        page_number = int(match["page_number"])
+        if page_number > 20:
+            continue
+        candidates.append(
+            {
+                "file": file_item,
+                "base": match["base"].strip(" _-"),
+                "pageNumber": page_number,
+            }
+        )
+
+    grouped = {}
+    for candidate in candidates:
+        key = (course_name, candidate["base"])
+        grouped.setdefault(key, []).append(candidate)
+
+    parses = {}
+    for (course_key, base), group in grouped.items():
+        pages = [item["pageNumber"] for item in group]
+        unique_pages = sorted(set(pages))
+        if len(group) < 2 or len(unique_pages) != len(group):
+            continue
+        if unique_pages != list(range(1, len(unique_pages) + 1)):
+            continue
+        parsed = parse_base_metadata(base, course_key)
+        if not parsed:
+            continue
+        page_group = "kuwiki-pagegroup-" + safe_id_part(course_key) + "-" + safe_id_part(base)
+        for item in group:
+            parses[item["file"]["id"]] = {
+                **parsed,
+                "pageGroup": page_group,
+                "pageNumber": item["pageNumber"],
+            }
+    return parses
+
+
+def page_suffix_match(stem: str) -> dict | None:
+    match = re.fullmatch(
+        r"(?P<base>.*?(?:19|20)\d{2}(?:年?度?)?(?:[.．_・])?(?:前期|後期|前|後|[AaBb])?)[\s_\-]*(?:\((?P<p1>\d+)\)|[（(](?P<p2>\d+)[）)]|_(?P<p3>\d+)|(?P<p4>\d+))",
+        stem,
+    )
+    if not match:
+        return None
+    return {
+        "base": match.group("base"),
+        "page_number": next(match.group(key) for key in ("p1", "p2", "p3", "p4") if match.group(key)),
+    }
+
+
+def trailing_page_suffix_match(stem: str) -> dict | None:
+    match = re.fullmatch(r"(?P<base>.*\D)(?P<page_number>\d{1,2})", stem)
+    if not match or not re.search(r"(?:19|20)\d{2}", match.group("base")):
+        return None
+    base = match.group("base").rstrip(" _-")
+    if re.search(r"No\.?$", base, re.IGNORECASE):
+        return None
+    return {"base": base, "page_number": match.group("page_number")}
+
+
+def parse_base_metadata(base: str, course_name: str) -> dict | None:
+    year_match = re.search(r"((?:19|20)\d{2})(?:年?度?)?(?:[.．_・])?(前期|後期|前|後|[AaBb])?", base)
+    if not year_match:
+        return None
+    explicit_term = normalize_term(year_match.group(2) or "")
+    before_year = base[: year_match.start()]
+    teacher = ""
+    for match in re.finditer(r"[（(]([^（）()]*)[）)]", before_year):
+        value = match.group(1).strip()
+        if value in ("文法", "演習", "実習") or is_non_teacher_paren(value):
+            continue
+        teacher = normalize_teacher(value)
+    subject = course_name.strip() or clean_typed_subject(before_year)
+    term = PAGE_BASE_TERM_OVERRIDES.get(base)
+    if term is None:
+        if year_match.group(2) in ("A", "a", "B", "b"):
+            term = infer_term_from_subject(subject) or explicit_term
+        else:
+            term = explicit_term or infer_term_from_subject(before_year) or infer_term_from_subject(subject)
+    if not term and base not in PAGE_BASE_TERM_OVERRIDES:
+        return None
+    return {"year": year_match.group(1) + term, "teacher": teacher, "subject": subject}
+
+
+def safe_id_part(value: str) -> str:
+    value = str(value).strip()
+    value = re.sub(r"[^0-9A-Za-z一-龥ぁ-んァ-ヶー々〆〤._-]+", "-", value)
+    return re.sub(r"-+", "-", value).strip("-._") or "group"
 
 
 def parse_no_year_filename(stem: str, course_name: str) -> dict | None:
@@ -523,7 +657,110 @@ def parse_typed_exam_filename(stem: str, course_name: str) -> dict | None:
 
     subject = subject_from_typed_filename(stem, before_year, teacher, course_name)
     term = explicit_term or infer_term_from_subject(clean_typed_subject(before_year)) or infer_term_from_subject(subject)
+    if not term:
+        return None
     return {"year": year + term, "teacher": teacher, "subject": subject, "testType": test_type}
+
+
+def parse_folder_path_filename(file_item: dict, course_name: str) -> dict | None:
+    folder_path = file_item.get("folderPath", "")
+    if not folder_path or is_material_context(folder_path):
+        return None
+
+    metadata = parse_folder_path_metadata(folder_path, course_name)
+    if not metadata:
+        return None
+
+    stem = Path(file_item["name"]).with_suffix("").name.strip()
+    if not looks_exam_like_from_folder(stem, folder_path):
+        return None
+
+    metadata["testType"] = infer_test_type(stem) or "定期テスト"
+    return metadata
+
+
+def parse_folder_path_metadata(folder_path: str, course_name: str) -> dict | None:
+    text = " ".join(part.strip() for part in folder_path.split("/") if part.strip())
+    year_match = re.search(r"((?:19|20)\d{2})(?:年?度?)?(?:[.．_・ ]*)?(前期|後期|前|後|[AaBb])?", text)
+    if not year_match:
+        return None
+
+    year = year_match.group(1)
+    term = normalize_term(year_match.group(2) or "") or infer_term_from_subject(course_name) or infer_term_from_subject(text)
+    teacher = teacher_from_folder_path(text, year_match)
+    return {"year": year + term, "teacher": teacher, "subject": course_name.strip()}
+
+
+def teacher_from_folder_path(text: str, year_match) -> str:
+    for match in re.finditer(r"[（(]([^（）()]*)[）)]", text):
+        value = match.group(1).strip()
+        if not value or is_non_teacher_paren(value) or re.search(r"(?:19|20)\d{2}|年度|前期|後期|問題|解答", value):
+            continue
+        return normalize_teacher(value.replace("、", "・").replace("_", "・"))
+
+    after_year = text[year_match.end() :].strip()
+    match = re.fullmatch(r"([一-龥々ぁ-んァ-ヶー・、]{1,8})", after_year)
+    if not match:
+        return ""
+    value = match.group(1).replace("、", "・")
+    if "・" not in value and re.fullmatch(r"[一-龥々]{3,}", value):
+        value = value[:2]
+    return normalize_teacher(value)
+
+
+def is_material_context(value: str) -> bool:
+    return any(pattern in value for pattern in MATERIAL_PATTERNS + REPORT_PATTERNS)
+
+
+def looks_exam_like_from_folder(stem: str, folder_path: str = "") -> bool:
+    lowered = stem.lower()
+    if any(marker in folder_path for marker in SMALL_TEST_MARKERS + REGULAR_TEST_MARKERS + ANSWER_PATTERNS):
+        return True
+    markers = SMALL_TEST_MARKERS + REGULAR_TEST_MARKERS + ANSWER_PATTERNS + (
+        "prob",
+        "exam",
+        "solution",
+        "solutions",
+        "ans",
+        "sa_",
+        "sma_",
+    )
+    return any(marker.lower() in lowered for marker in markers)
+
+
+def parse_year_not_at_end_filename(stem: str, course_name: str) -> dict | None:
+    if looks_like_timestamp_filename(stem):
+        return None
+
+    year_match = re.search(r"((?:19|20)\d{2})(?:年?度?)?(?:[.．_・])?(前期|後期|前|後|[AaBb])?", stem)
+    if not year_match:
+        return None
+
+    suffix_term = normalize_term(year_match.group(2) or "")
+    subject_term = infer_term_from_subject(course_name)
+    if year_match.group(2) in ("A", "a", "B", "b"):
+        term = subject_term or suffix_term
+    else:
+        term = suffix_term or subject_term
+    if not term:
+        return None
+
+    teacher = teacher_from_brackets(stem, year_match.start())
+    test_type = infer_test_type(stem) or "定期テスト"
+    return {
+        "year": year_match.group(1) + term,
+        "teacher": teacher,
+        "subject": course_name.strip(),
+        "testType": test_type,
+    }
+
+
+def looks_like_timestamp_filename(stem: str) -> bool:
+    return bool(
+        re.fullmatch(r"(?:IMG|1MG)?_?\d{8}[_-]?\d{6}.*", stem, re.IGNORECASE)
+        or re.fullmatch(r"\d{14,}.*", stem)
+        or re.fullmatch(r"\d{8}[_-]\d{6}.*", stem)
+    )
 
 
 def infer_test_type(stem: str) -> str:
@@ -535,9 +772,9 @@ def infer_test_type(stem: str) -> str:
 
 
 def normalize_term(term: str) -> str:
-    if term in ("前", "前期"):
+    if term in ("前", "前期", "A", "a"):
         return "前期"
-    if term in ("後", "後期"):
+    if term in ("後", "後期", "B", "b"):
         return "後期"
     return ""
 
@@ -604,6 +841,7 @@ def is_non_teacher_paren(value: str) -> bool:
 
 def infer_term_from_subject(subject: str) -> str:
     normalized = re.sub(r"[（(［\[].*[）)］\]]$", "", subject).strip()
+    normalized = re.sub(r"[（(［\[]+$", "", normalized).strip()
     if normalized.endswith(FRONT_TERM_SUFFIXES):
         return "前期"
     if normalized.endswith(BACK_TERM_SUFFIXES):
