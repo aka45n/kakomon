@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 import webbrowser
 
 from drive_downloader import DATA_PATH, FILES_DIR, ROOT, download_exam_file
@@ -17,6 +17,7 @@ from drive_downloader import DATA_PATH, FILES_DIR, ROOT, download_exam_file
 FEEDBACK_PATH = ROOT / "data" / "feedback.json"
 SEED_ROOT = Path(os.environ["KAKOMON_SEED_ROOT"]) if os.environ.get("KAKOMON_SEED_ROOT") else None
 TEST_TYPES = ("小テスト", "定期テスト")
+TERMS = ("前期", "後期")
 COURSE_GROUPS = (
     "人社群",
     "自然群",
@@ -41,6 +42,16 @@ def year_sort_value(value):
 def reverse_year_sort_value(value):
     year, semester = year_sort_value(value)
     return (-year, -semester)
+
+
+def split_year_term(value):
+    match = re.match(r"^(20\d{2})(前期|後期)$", str(value))
+    if match:
+        return match.group(1), match.group(2)
+    match = re.match(r"^(20\d{2})$", str(value))
+    if match:
+        return match.group(1), ""
+    return "20", ""
 
 
 def normalize_group(value):
@@ -68,6 +79,62 @@ def safe_filename_part(value):
     value = re.sub(r"[^0-9A-Za-z一-龥ぁ-んァ-ヶー々〆〤._-]+", "_", value)
     value = re.sub(r"_+", "_", value).strip("._")
     return value or "file"
+
+
+def safe_rule_filename_text(value):
+    value = str(value).strip()
+    value = value.replace("/", "_").replace(":", "_")
+    value = re.sub(r"[\x00-\x1f]", "", value)
+    value = re.sub(r"\s+", "", value)
+    return value
+
+
+def clean_teacher_name(value):
+    return re.sub(r"\s+", "", str(value))
+
+
+def exam_rule_filename(subject, teacher, year, suffix, test_type="", test_number=""):
+    suffix = suffix or ".pdf"
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+    subject = safe_rule_filename_text(subject) or "過去問"
+    teacher = safe_rule_filename_text(clean_teacher_name(teacher))
+    year = safe_rule_filename_text(year)
+    number_part = ""
+    if test_type == "小テスト" and test_number:
+        number_part = f"_小テスト{safe_rule_filename_text(test_number)}"
+    return f"{subject}({teacher}){year}{number_part}{suffix.lower()}"
+
+
+def display_test_type(exam):
+    test_type = exam.get("testType", "")
+    test_number = exam.get("testNumber")
+    if test_type == "小テスト" and test_number:
+        return f"小テスト{test_number}"
+    return test_type
+
+
+def test_order_value(exam):
+    if exam.get("testType") == "小テスト":
+        number = exam.get("testNumber")
+        if number in ("", None):
+            return (0, 0)
+        try:
+            return (0, int(number))
+        except (TypeError, ValueError):
+            return (0, 9999)
+    if exam.get("testType") == "定期テスト":
+        return (1, 0)
+    return (2, 0)
+
+
+def same_exam_condition_key(exam):
+    return (
+        exam.get("year", ""),
+        exam.get("teacher", ""),
+        exam.get("subject", ""),
+        normalize_group(exam.get("group", "")),
+    )
 
 
 def unique_file_path(path):
@@ -109,6 +176,7 @@ class KakomonApp(tk.Tk):
         self.load_data()
         self.bind_events()
         self.clear_results("検索条件を指定して検索してください")
+        self.focus_landing_search()
 
     def ensure_data_store(self):
         (ROOT / "data").mkdir(parents=True, exist_ok=True)
@@ -118,7 +186,6 @@ class KakomonApp(tk.Tk):
         for name, default_content in (
             ("exams.json", "[]\n"),
             ("feedback.json", "[]\n"),
-            ("kuwiki_unresolved.json", "[]\n"),
         ):
             target = ROOT / "data" / name
             if target.exists():
@@ -244,18 +311,20 @@ class KakomonApp(tk.Tk):
 
         footer_frame = ttk.Frame(self.main_frame)
         footer_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        footer_frame.columnconfigure(4, weight=1)
+        footer_frame.columnconfigure(5, weight=1)
         ttk.Button(footer_frame, text="詳細を表示", command=self.open_detail_page).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(footer_frame, text="ファイルの場所を開く", command=self.open_file_location).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(footer_frame, text="編集", command=self.open_edit_exam_dialog).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(footer_frame, text="ファイルの場所を開く", command=self.open_file_location).grid(row=0, column=2, padx=(0, 8))
         self.download_button = ttk.Button(footer_frame, text="Driveからローカル保存", command=self.download_selected, state="disabled")
-        self.download_button.grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(footer_frame, text="ホームへ", command=self.show_home).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(footer_frame, textvariable=self.status_var).grid(row=0, column=4, sticky="e")
+        self.download_button.grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(footer_frame, text="ホームへ", command=self.show_home).grid(row=0, column=4, padx=(0, 8))
+        ttk.Label(footer_frame, textvariable=self.status_var).grid(row=0, column=5, sticky="e")
         self.show_landing_layout()
 
     def create_context_menu(self):
         self.context_menu = tk.Menu(self, tearoff=False)
         self.context_menu.add_command(label="詳細を表示", command=self.open_detail_page)
+        self.context_menu.add_command(label="編集", command=self.open_edit_exam_dialog)
         self.context_menu.add_command(label="ファイルの場所を開く", command=self.open_file_location)
 
     def add_labeled_entry(self, parent, label, variable, row):
@@ -271,6 +340,8 @@ class KakomonApp(tk.Tk):
         return combo
 
     def bind_events(self):
+        self.bind_all("<ButtonPress-1>", self.focus_clicked_widget, add="+")
+        self.tree.bind("<ButtonPress-1>", self.select_tree_row_on_click, add="+")
         self.tree.bind("<Double-1>", lambda _: self.open_preferred())
         self.tree.bind("<Button-2>", self.show_context_menu)
         self.tree.bind("<Button-3>", self.show_context_menu)
@@ -282,6 +353,20 @@ class KakomonApp(tk.Tk):
         for variable in (self.year_var, self.group_var, self.test_type_var):
             variable.trace_add("write", lambda *_: self.apply_filters_if_searched())
         self.sort_var.trace_add("write", lambda *_: self.apply_filters())
+
+    def focus_clicked_widget(self, event):
+        try:
+            event.widget.focus_set()
+        except tk.TclError:
+            pass
+
+    def select_tree_row_on_click(self, event):
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            return
+        self.tree.selection_set(row_id)
+        self.tree.focus(row_id)
+        self.update_selected_detail()
 
     def show_context_menu(self, event):
         row_id = self.tree.identify_row(event.y)
@@ -332,16 +417,20 @@ class KakomonApp(tk.Tk):
         self.test_type_var.set("")
         self.show_landing_layout()
         self.clear_results("検索条件を指定して検索してください")
+        self.focus_landing_search()
 
     def show_home(self):
         self.has_searched = False
         self.show_landing_layout()
         self.clear_results("検索条件を指定して検索してください")
+        self.focus_landing_search()
 
     def apply_filters(self):
         if not self.has_search_condition():
             self.clear_results("検索条件を1つ以上指定してください")
+            self.focus_landing_search()
             return
+        previous_focus = self.focus_get()
         self.has_searched = True
         self.show_results_layout()
         self.filtered = [
@@ -349,13 +438,19 @@ class KakomonApp(tk.Tk):
             for exam in self.exams
             if self.matches(exam)
         ]
-        self.filtered.sort(key=self.sort_key, reverse=self.sort_var.get() == "年度が新しい順")
-        if self.sort_var.get() == "科目名順":
-            self.filtered.sort(key=lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", ""))))
+        self.filtered = self.group_filtered_exams(self.filtered)
+        if self.sort_var.get() == "年度が新しい順":
+            self.filtered.sort(key=self.sort_key_newest)
+        elif self.sort_var.get() == "年度が古い順":
+            self.filtered.sort(key=self.sort_key_oldest)
+        elif self.sort_var.get() == "科目名順":
+            self.filtered.sort(key=lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)))
         elif self.sort_var.get() == "教師名順":
-            self.filtered.sort(key=lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", ""))))
+            self.filtered.sort(key=lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)))
 
         self.render_table()
+        if not self.is_filter_focus(previous_focus):
+            self.focus_results_table(select_first=True)
 
     def apply_filters_if_searched(self):
         if self.has_searched:
@@ -402,8 +497,11 @@ class KakomonApp(tk.Tk):
             return False
         return True
 
-    def sort_key(self, exam):
-        return (year_sort_value(exam.get("year", "")), exam.get("subject", ""))
+    def sort_key_newest(self, exam):
+        return (reverse_year_sort_value(exam.get("year", "")), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
+
+    def sort_key_oldest(self, exam):
+        return (year_sort_value(exam.get("year", "")), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
 
     def render_table(self):
         self.tree.delete(*self.tree.get_children())
@@ -417,13 +515,48 @@ class KakomonApp(tk.Tk):
                     exam.get("subject", ""),
                     exam.get("teacher", ""),
                     normalize_group(exam.get("group", "")),
-                    exam.get("testType", ""),
+                    display_test_type(exam),
                     exam.get("sourceSite", ""),
-                    self.feedback_count(exam["id"]),
+                    self.feedback_count_for_exam(exam),
                 ),
             )
         self.count_label.config(text=f"{len(self.filtered)}件")
         self.update_selected_detail()
+
+    def is_filter_focus(self, widget):
+        return widget in (
+            self.landing_subject_entry,
+            self.landing_teacher_entry,
+            self.landing_year_combo,
+            self.landing_group_combo,
+            self.landing_test_type_combo,
+            self.subject_entry,
+            self.teacher_entry,
+            self.year_combo,
+            self.group_combo,
+            self.test_type_combo,
+            self.sort_combo,
+        )
+
+    def focus_widget(self, widget):
+        self.after_idle(lambda: widget.focus_set() if widget.winfo_exists() else None)
+
+    def focus_landing_search(self):
+        self.focus_widget(self.landing_subject_entry)
+
+    def focus_results_table(self, select_first=False):
+        def apply_focus():
+            if not self.tree.winfo_exists():
+                return
+            children = self.tree.get_children()
+            if select_first and children and not self.tree.selection():
+                self.tree.selection_set(children[0])
+                self.tree.focus(children[0])
+                self.tree.see(children[0])
+                self.update_selected_detail()
+            self.tree.focus_set()
+
+        self.after_idle(apply_focus)
 
     def selected_exam(self):
         selection = self.tree.selection()
@@ -432,6 +565,34 @@ class KakomonApp(tk.Tk):
             return None
         exam_id = selection[0]
         return next((exam for exam in self.exams if exam.get("id") == exam_id), None)
+
+    def group_filtered_exams(self, exams):
+        grouped = {}
+        result = []
+        for exam in exams:
+            page_group = exam.get("pageGroup")
+            if not page_group:
+                result.append(exam)
+                continue
+            if page_group in grouped:
+                continue
+            pages = self.page_group_exams(exam)
+            representative = pages[0] if pages else exam
+            grouped[page_group] = representative
+            result.append(representative)
+        return result
+
+    def page_group_exams(self, exam):
+        page_group = exam.get("pageGroup")
+        if not page_group:
+            return [exam]
+        pages = [
+            item
+            for item in self.exams
+            if item.get("pageGroup") == page_group and item.get("driveUrl")
+        ]
+        pages.sort(key=lambda item: (int(item.get("pageNumber") or 0), item.get("id", "")))
+        return pages or [exam]
 
     def update_selected_detail(self):
         selection = self.tree.selection()
@@ -453,7 +614,7 @@ class KakomonApp(tk.Tk):
         self.local_file_var.set(f"ローカルファイル: {local_file}")
         self.source_site_var.set(f"取得元: {source_site}")
         self.notes_var.set(f"注釈: {notes}")
-        self.feedback_summary_var.set(self.feedback_summary(exam["id"]))
+        self.feedback_summary_var.set(self.feedback_summary_for_exam(exam))
         self.download_button.configure(state="disabled" if local_file_exists(exam) else "normal")
 
     def read_feedback(self):
@@ -476,8 +637,22 @@ class KakomonApp(tk.Tk):
         count = len(self.feedback_for_exam(exam_id))
         return "" if count == 0 else str(count)
 
+    def feedback_count_for_exam(self, exam):
+        count = sum(len(self.feedback_for_exam(item["id"])) for item in self.page_group_exams(exam))
+        return "" if count == 0 else str(count)
+
     def feedback_summary(self, exam_id):
         items = self.feedback_for_exam(exam_id)
+        if not items:
+            return "メモ: なし"
+        latest = items[-1]
+        comment = latest.get("comment", "").replace("\n", " ")
+        return f"メモ: {len(items)}件 / 最新: {comment}"
+
+    def feedback_summary_for_exam(self, exam):
+        items = []
+        for page in self.page_group_exams(exam):
+            items.extend(self.feedback_for_exam(page["id"]))
         if not items:
             return "メモ: なし"
         latest = items[-1]
@@ -501,9 +676,11 @@ class KakomonApp(tk.Tk):
     def open_add_exam_dialog(self):
         window = tk.Toplevel(self)
         window.title("過去問を追加")
-        window.geometry("560x620")
-        window.minsize(520, 560)
+        window.geometry("560x720")
+        window.minsize(520, 660)
         window.columnconfigure(0, weight=1)
+        window.transient(self)
+        window.lift()
 
         form = ttk.Frame(window, padding=16)
         form.grid(row=0, column=0, sticky="nsew")
@@ -511,24 +688,25 @@ class KakomonApp(tk.Tk):
 
         values = {
             "file": tk.StringVar(),
-            "year": tk.StringVar(),
+            "year": tk.StringVar(value="20"),
+            "term": tk.StringVar(value="前期"),
             "teacher": tk.StringVar(),
             "subject": tk.StringVar(),
             "group": tk.StringVar(),
             "testType": tk.StringVar(value="定期テスト"),
-            "sourceSite": tk.StringVar(value="手動追加"),
-            "driveUrl": tk.StringVar(),
+            "testNumber": tk.StringVar(),
         }
 
         ttk.Label(form, text="過去問を追加", font=("", 20, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
-        self.add_form_row(form, "ファイル", values["file"], 1, browse_command=lambda: self.choose_exam_file(values["file"]))
-        self.add_form_row(form, "年度", values["year"], 2)
-        self.add_form_row(form, "教師名", values["teacher"], 3)
-        self.add_form_row(form, "科目名", values["subject"], 4)
-        self.add_form_combo(form, "科目群", values["group"], 5, COURSE_GROUPS)
-        self.add_form_combo(form, "テスト種別", values["testType"], 6, TEST_TYPES)
-        self.add_form_row(form, "取得元", values["sourceSite"], 7)
-        self.add_form_row(form, "Drive URL", values["driveUrl"], 8)
+        file_entry = self.add_form_row(form, "ファイル", values["file"], 1, browse_command=lambda: self.choose_exam_file(values["file"]))
+        year_entry = self.add_year_row(form, values["year"], 2)
+        term_combo = self.add_form_combo(form, "前期/後期", values["term"], 3, TERMS)
+        teacher_entry = self.add_form_row(form, "教師名", values["teacher"], 4)
+        subject_entry = self.add_form_row(form, "科目名", values["subject"], 5)
+        group_combo = self.add_form_combo(form, "科目群", values["group"], 6, COURSE_GROUPS)
+        test_type_combo = self.add_form_combo(form, "テスト種別", values["testType"], 7, TEST_TYPES)
+        test_number_label = ttk.Label(form, text="小テスト番号")
+        test_number_entry = ttk.Entry(form, textvariable=values["testNumber"])
 
         ttk.Label(form, text="注釈").grid(row=9, column=0, sticky="nw", padx=(0, 10), pady=(8, 4))
         notes = tk.Text(form, height=5, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
@@ -544,20 +722,125 @@ class KakomonApp(tk.Tk):
             command=lambda: self.add_exam(values, notes, window),
         ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(button_frame, text="キャンセル", command=window.destroy).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry)
+        values["testType"].trace_add(
+            "write",
+            lambda *_: self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry),
+        )
+        self.bind_return_focus(file_entry, year_entry)
+        self.bind_return_focus(year_entry, term_combo)
+        self.bind_return_focus(term_combo, teacher_entry)
+        self.bind_return_focus(teacher_entry, subject_entry)
+        self.bind_return_focus(subject_entry, group_combo)
+        self.bind_return_focus(group_combo, test_type_combo)
+        test_type_combo.bind(
+            "<Return>",
+            lambda _: self.focus_test_number_or_notes(values["testType"], test_number_entry, notes),
+        )
+        self.bind_return_focus(test_number_entry, notes)
+        self.bind_teacher_cleaner(values["teacher"])
+        window.after_idle(lambda: (window.focus_force(), year_entry.focus_set()) if window.winfo_exists() else None)
+
+    def bind_teacher_cleaner(self, variable):
+        cleaning = {"active": False}
+
+        def clean(*_):
+            if cleaning["active"]:
+                return
+            value = variable.get()
+            cleaned = clean_teacher_name(value)
+            if value == cleaned:
+                return
+            cleaning["active"] = True
+            variable.set(cleaned)
+            cleaning["active"] = False
+
+        variable.trace_add("write", clean)
+
+    def bind_return_focus(self, widget, next_widget):
+        widget.bind("<Return>", lambda _: self.focus_next_widget(next_widget))
+
+    def focus_next_widget(self, widget):
+        widget.focus_set()
+        return "break"
+
+    def focus_test_number_or_notes(self, test_type_var, test_number_entry, notes_widget):
+        if test_type_var.get() == "小テスト":
+            test_number_entry.focus_set()
+        else:
+            notes_widget.focus_set()
+        return "break"
+
+    def update_test_number_visibility(self, test_type_var, test_number_var, label, entry, row=8):
+        if test_type_var.get() == "小テスト":
+            label.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
+            entry.grid(row=row, column=1, columnspan=2, sticky="ew", pady=5)
+        else:
+            test_number_var.set("")
+            label.grid_remove()
+            entry.grid_remove()
+
+    def add_year_row(self, parent, variable, row):
+        ttk.Label(parent, text="年度").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
+        validate_command = (self.register(self.validate_year_edit), "%P")
+        entry = ttk.Entry(parent, textvariable=variable, validate="key", validatecommand=validate_command)
+        entry.grid(row=row, column=1, columnspan=2, sticky="ew", pady=5)
+        entry.bind("<BackSpace>", self.protect_year_prefix)
+        entry.bind("<Delete>", self.protect_year_prefix)
+        entry.bind("<Home>", self.move_year_cursor_to_editable_part)
+        entry.bind("<Left>", self.keep_year_cursor_after_prefix_event, add="+")
+        entry.bind("<ButtonRelease-1>", self.keep_year_cursor_after_prefix_event, add="+")
+        entry.bind("<KeyRelease>", self.keep_year_cursor_after_prefix_event, add="+")
+        self.keep_year_cursor_after_prefix(entry)
+        return entry
+
+    def validate_year_edit(self, proposed):
+        return bool(re.fullmatch(r"20\d{0,2}", proposed))
+
+    def protect_year_prefix(self, event):
+        entry = event.widget
+        try:
+            selection_start = entry.index("sel.first")
+            selection_end = entry.index("sel.last")
+            if selection_start < 2:
+                if selection_end <= 2:
+                    entry.icursor(2)
+                    return "break"
+                entry.selection_range(2, selection_end)
+        except tk.TclError:
+            if entry.index("insert") <= 2:
+                entry.icursor(2)
+                return "break"
+        return None
+
+    def move_year_cursor_to_editable_part(self, event):
+        event.widget.icursor(2)
+        return "break"
+
+    def keep_year_cursor_after_prefix_event(self, event):
+        self.after_idle(lambda: self.keep_year_cursor_after_prefix(event.widget))
+
+    def keep_year_cursor_after_prefix(self, entry):
+        if not entry.winfo_exists():
+            return
+        if entry.index("insert") < 2:
+            entry.icursor(2)
 
     def add_form_row(self, parent, label, variable, row, browse_command=None):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
         entry = ttk.Entry(parent, textvariable=variable)
-        entry.grid(row=row, column=1, sticky="ew", pady=5)
         if browse_command:
+            entry.grid(row=row, column=1, sticky="ew", pady=5)
             ttk.Button(parent, text="選択", command=browse_command).grid(row=row, column=2, sticky="ew", padx=(8, 0), pady=5)
         else:
-            ttk.Label(parent, text="").grid(row=row, column=2, sticky="ew", padx=(8, 0), pady=5)
+            entry.grid(row=row, column=1, columnspan=2, sticky="ew", pady=5)
+        return entry
 
     def add_form_combo(self, parent, label, variable, row, values):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
         combo = ttk.Combobox(parent, textvariable=variable, values=values, state="readonly")
         combo.grid(row=row, column=1, columnspan=2, sticky="ew", pady=5)
+        return combo
 
     def choose_exam_file(self, file_var):
         filename = filedialog.askopenfilename(title="追加する過去問ファイルを選択")
@@ -566,44 +849,53 @@ class KakomonApp(tk.Tk):
 
     def add_exam(self, values, notes_widget, window):
         year = values["year"].get().strip()
+        term = values["term"].get().strip()
+        full_year = f"{year}{term}" if year and term else ""
         subject = values["subject"].get().strip()
+        teacher = clean_teacher_name(values["teacher"].get())
         group = values["group"].get().strip()
         test_type = values["testType"].get().strip()
+        test_number = values["testNumber"].get().strip()
         file_path = values["file"].get().strip()
-        drive_url = values["driveUrl"].get().strip()
 
-        if not year or not subject or not group or not test_type:
-            messagebox.showinfo("過去問検索", "年度、科目名、科目群、テスト種別は必須です。")
+        if not file_path or not year or not term or not teacher or not subject or not group or not test_type:
+            messagebox.showinfo("過去問検索", "ファイル、年度、前期/後期、教師名、科目名、科目群、テスト種別は必須です。")
             return
-        if not file_path and not drive_url:
-            messagebox.showinfo("過去問検索", "ファイルまたはDrive URLを指定してください。")
+        if not re.fullmatch(r"20\d{2}", year):
+            messagebox.showinfo("過去問検索", "年度は20から始まる半角数字4桁で入力してください。")
+            return
+        if test_number and not re.fullmatch(r"[1-9]\d*", test_number):
+            messagebox.showinfo("過去問検索", "小テスト番号は半角数字で入力してください。")
             return
 
         local_file = ""
-        if file_path:
-            source = Path(file_path)
-            if not source.exists():
-                messagebox.showwarning("過去問検索", f"ファイルが見つかりません。\n{source}")
-                return
-            FILES_DIR.mkdir(parents=True, exist_ok=True)
-            target_name = "_".join(safe_filename_part(part) for part in (year, subject, values["teacher"].get(), test_type) if part)
-            target = unique_file_path(FILES_DIR / f"{target_name or safe_filename_part(source.stem)}{source.suffix}")
-            shutil.copyfile(source, target)
-            local_file = f"./files/{target.name}"
+        source = Path(file_path)
+        if not source.exists():
+            messagebox.showwarning("過去問検索", f"ファイルが見つかりません。\n{source}")
+            return
+        FILES_DIR.mkdir(parents=True, exist_ok=True)
+        target = FILES_DIR / exam_rule_filename(subject, teacher, full_year, source.suffix, test_type, test_number)
+        if target.exists():
+            messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{target.name}")
+            return
+        shutil.copyfile(source, target)
+        local_file = f"./files/{target.name}"
 
         now = datetime.now().strftime("%Y%m%d%H%M%S")
         exam = {
             "id": f"manual-{now}-{safe_filename_part(subject)}",
-            "year": year,
-            "teacher": values["teacher"].get().strip(),
+            "year": full_year,
+            "teacher": teacher,
             "subject": subject,
             "group": group,
             "testType": test_type,
-            "sourceSite": values["sourceSite"].get().strip() or "手動追加",
+            "sourceSite": "手動追加",
             "localFile": local_file,
-            "driveUrl": drive_url,
+            "driveUrl": "",
             "notes": notes_widget.get("1.0", "end").strip(),
         }
+        if test_type == "小テスト" and test_number:
+            exam["testNumber"] = test_number
         self.exams.append(exam)
         DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.refresh_filter_options()
@@ -611,6 +903,179 @@ class KakomonApp(tk.Tk):
             self.apply_filters()
         self.status_var.set("過去問を追加しました")
         messagebox.showinfo("過去問検索", "過去問を追加しました。")
+        window.destroy()
+
+    def open_edit_exam_dialog(self, exam=None):
+        exam = exam or self.selected_exam()
+        if not exam:
+            return
+
+        window = tk.Toplevel(self)
+        window.title("過去問を編集")
+        window.geometry("560x640")
+        window.minsize(520, 580)
+        window.columnconfigure(0, weight=1)
+        window.transient(self)
+        window.lift()
+
+        form = ttk.Frame(window, padding=16)
+        form.grid(row=0, column=0, sticky="nsew")
+        form.columnconfigure(1, weight=1)
+
+        year, term = split_year_term(exam.get("year", ""))
+        values = {
+            "year": tk.StringVar(value=year or "20"),
+            "term": tk.StringVar(value=term or "前期"),
+            "teacher": tk.StringVar(value=exam.get("teacher", "")),
+            "subject": tk.StringVar(value=exam.get("subject", "")),
+            "group": tk.StringVar(value=exam.get("group", "")),
+            "testType": tk.StringVar(value=exam.get("testType", "定期テスト")),
+            "testNumber": tk.StringVar(value=str(exam.get("testNumber") or "")),
+        }
+
+        ttk.Label(form, text="過去問を編集", font=("", 20, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        year_entry = self.add_year_row(form, values["year"], 1)
+        term_combo = self.add_form_combo(form, "前期/後期", values["term"], 2, TERMS)
+        teacher_entry = self.add_form_row(form, "教師名", values["teacher"], 3)
+        subject_entry = self.add_form_row(form, "科目名", values["subject"], 4)
+        group_combo = self.add_form_combo(form, "科目群", values["group"], 5, COURSE_GROUPS)
+        test_type_combo = self.add_form_combo(form, "テスト種別", values["testType"], 6, TEST_TYPES)
+        test_number_label = ttk.Label(form, text="小テスト番号")
+        test_number_entry = ttk.Entry(form, textvariable=values["testNumber"])
+
+        ttk.Label(form, text="注釈").grid(row=8, column=0, sticky="nw", padx=(0, 10), pady=(8, 4))
+        notes = tk.Text(form, height=5, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        notes.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(8, 4))
+        notes.insert("1.0", exam.get("notes", ""))
+
+        button_frame = ttk.Frame(form)
+        button_frame.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
+        ttk.Button(button_frame, text="保存", command=lambda: self.save_exam_edits(exam, values, notes, window)).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        if self.is_manual_exam(exam):
+            ttk.Button(button_frame, text="削除", command=lambda: self.delete_manual_exam(exam, window)).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(button_frame, text="キャンセル", command=window.destroy).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+
+        self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry, row=7)
+        values["testType"].trace_add(
+            "write",
+            lambda *_: self.update_test_number_visibility(values["testType"], values["testNumber"], test_number_label, test_number_entry, row=7),
+        )
+        self.bind_return_focus(year_entry, term_combo)
+        self.bind_return_focus(term_combo, teacher_entry)
+        self.bind_return_focus(teacher_entry, subject_entry)
+        self.bind_return_focus(subject_entry, group_combo)
+        self.bind_return_focus(group_combo, test_type_combo)
+        test_type_combo.bind("<Return>", lambda _: self.focus_test_number_or_notes(values["testType"], test_number_entry, notes))
+        self.bind_return_focus(test_number_entry, notes)
+        self.bind_teacher_cleaner(values["teacher"])
+        window.after_idle(lambda: (window.focus_force(), year_entry.focus_set()) if window.winfo_exists() else None)
+
+    def save_exam_edits(self, exam, values, notes_widget, window):
+        year = values["year"].get().strip()
+        term = values["term"].get().strip()
+        teacher = clean_teacher_name(values["teacher"].get())
+        subject = values["subject"].get().strip()
+        group = values["group"].get().strip()
+        test_type = values["testType"].get().strip()
+        test_number = values["testNumber"].get().strip()
+
+        if not year or not term or not teacher or not subject or not group or not test_type:
+            messagebox.showinfo("過去問検索", "年度、前期/後期、教師名、科目名、科目群、テスト種別は必須です。")
+            return
+        if not re.fullmatch(r"20\d{2}", year):
+            messagebox.showinfo("過去問検索", "年度は20から始まる半角数字4桁で入力してください。")
+            return
+        if test_number and not re.fullmatch(r"[1-9]\d*", test_number):
+            messagebox.showinfo("過去問検索", "小テスト番号は半角数字で入力してください。")
+            return
+
+        target = next((item for item in self.exams if item.get("id") == exam.get("id")), None)
+        if not target:
+            messagebox.showwarning("過去問検索", "編集対象が見つかりません。")
+            return
+        new_local_file = self.renamed_local_file_for_edit(
+            target,
+            subject,
+            teacher,
+            f"{year}{term}",
+            test_type,
+            test_number,
+        )
+        if new_local_file is None:
+            return
+        target.update({
+            "year": f"{year}{term}",
+            "teacher": teacher,
+            "subject": subject,
+            "group": group,
+            "testType": test_type,
+            "notes": notes_widget.get("1.0", "end").strip(),
+        })
+        if new_local_file:
+            target["localFile"] = new_local_file
+        if test_type == "小テスト" and test_number:
+            target["testNumber"] = test_number
+        else:
+            target.pop("testNumber", None)
+
+        DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.refresh_filter_options()
+        if self.has_searched:
+            self.apply_filters()
+        self.status_var.set("過去問を編集しました")
+        messagebox.showinfo("過去問検索", "過去問を編集しました。")
+        window.destroy()
+
+    def renamed_local_file_for_edit(self, exam, subject, teacher, year, test_type, test_number):
+        current_path = local_file_path(exam)
+        if not current_path or not current_path.exists():
+            return ""
+        try:
+            current_path.resolve().relative_to(ROOT.resolve())
+        except ValueError:
+            return ""
+        suffix = current_path.suffix or ".pdf"
+        target_path = FILES_DIR / exam_rule_filename(subject, teacher, year, suffix, test_type, test_number)
+        if current_path.resolve() == target_path.resolve():
+            return ""
+        if target_path.exists():
+            messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{target_path.name}")
+            return None
+        FILES_DIR.mkdir(parents=True, exist_ok=True)
+        current_path.rename(target_path)
+        return f"./files/{target_path.name}"
+
+    def is_manual_exam(self, exam):
+        return exam.get("sourceSite") == "手動追加" or str(exam.get("id", "")).startswith("manual-")
+
+    def delete_manual_exam(self, exam, window):
+        if not self.is_manual_exam(exam):
+            messagebox.showinfo("過去問検索", "削除できるのは手動追加の過去問だけです。")
+            return
+        first = messagebox.askyesno("削除確認", "この手動追加の過去問を削除しますか？")
+        if not first:
+            return
+        second = messagebox.askyesno("最終確認", "本当に削除しますか？この操作は取り消せません。")
+        if not second:
+            return
+        self.exams = [item for item in self.exams if item.get("id") != exam.get("id")]
+        local_path = local_file_path(exam)
+        if local_path and local_path.exists():
+            try:
+                local_path.resolve().relative_to(ROOT.resolve())
+            except ValueError:
+                pass
+            else:
+                local_path.unlink()
+        DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.refresh_filter_options()
+        if self.has_searched:
+            self.apply_filters()
+        self.status_var.set("過去問を削除しました")
+        messagebox.showinfo("過去問検索", "過去問を削除しました。")
         window.destroy()
 
     def open_detail_page(self, exam=None):
@@ -624,6 +1089,8 @@ class KakomonApp(tk.Tk):
         window.minsize(640, 540)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(1, weight=1)
+        window.transient(self)
+        window.lift()
 
         header = ttk.Frame(window, padding=16)
         header.grid(row=0, column=0, sticky="ew")
@@ -639,17 +1106,19 @@ class KakomonApp(tk.Tk):
         info = ttk.LabelFrame(body, text="過去問情報", padding=12)
         info.grid(row=0, column=0, sticky="ew")
         info.columnconfigure(1, weight=1)
-        rows = (
+        rows = [
             ("年度", exam.get("year", "")),
             ("教師名", exam.get("teacher", "") or "未設定"),
             ("科目名", exam.get("subject", "") or "未設定"),
             ("科目群", exam.get("group", "") or "未設定"),
-            ("テスト種別", exam.get("testType", "") or "未設定"),
+            ("テスト種別", display_test_type(exam) or "未設定"),
             ("取得元", exam.get("sourceSite", "") or "未設定"),
             ("ファイル状態", "ローカル保存済み" if local_file_exists(exam) else "Drive参照" if exam.get("driveUrl") else "未登録"),
             ("ローカルファイル", exam.get("localFile") if local_file_exists(exam) else "なし"),
             ("注釈", exam.get("notes", "") or "なし"),
-        )
+        ]
+        if exam.get("testType") == "小テスト" and exam.get("testNumber"):
+            rows.insert(5, ("小テスト番号", exam.get("testNumber")))
         for row, (label, value) in enumerate(rows):
             ttk.Label(info, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 12), pady=3)
             ttk.Label(info, text=value, wraplength=560).grid(row=row, column=1, sticky="ew", pady=3)
@@ -670,7 +1139,7 @@ class KakomonApp(tk.Tk):
             pady=8,
         )
         existing.grid(row=0, column=0, columnspan=2, sticky="nsew")
-        existing.insert("1.0", self.detail_feedback_text(exam["id"]))
+        existing.insert("1.0", self.detail_feedback_text_for_exam(exam))
         existing.configure(state="disabled")
 
         ttk.Label(feedback_box, text="新しいメモ").grid(row=1, column=0, sticky="w", pady=(10, 4))
@@ -684,17 +1153,19 @@ class KakomonApp(tk.Tk):
 
         actions = ttk.Frame(window, padding=(16, 0, 16, 16))
         actions.grid(row=2, column=0, sticky="ew")
-        actions.columnconfigure(4, weight=1)
+        actions.columnconfigure(5, weight=1)
         ttk.Button(actions, text="開く", command=lambda: self.open_exam_preferred(exam)).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(actions, text="ファイルの場所を開く", command=lambda: self.open_exam_file_location(exam)).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(actions, text="編集", command=lambda: self.open_edit_exam_dialog(exam)).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(actions, text="ファイルの場所を開く", command=lambda: self.open_exam_file_location(exam)).grid(row=0, column=2, padx=(0, 8))
         download_state = "disabled" if local_file_exists(exam) else "normal"
         ttk.Button(
             actions,
             text="Driveからローカル保存",
             command=lambda: self.download_exam_from_detail(exam, window),
             state=download_state,
-        ).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(actions, text="閉じる", command=window.destroy).grid(row=0, column=3, padx=(0, 8))
+        ).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(actions, text="閉じる", command=window.destroy).grid(row=0, column=4, padx=(0, 8))
+        window.after_idle(lambda: (window.focus_force(), new_feedback.focus_set()) if window.winfo_exists() else None)
 
     def detail_feedback_text(self, exam_id):
         items = self.feedback_for_exam(exam_id)
@@ -705,6 +1176,15 @@ class KakomonApp(tk.Tk):
             lines.append(f"[{item.get('createdAt', '')}] {item.get('comment', '')}")
         return "\n\n".join(lines)
 
+    def detail_feedback_text_for_exam(self, exam):
+        lines = []
+        for page in self.page_group_exams(exam):
+            page_label = f"{page.get('pageNumber')}ページ目" if exam.get("pageGroup") else ""
+            for item in self.feedback_for_exam(page["id"]):
+                prefix = f"{page_label} " if page_label else ""
+                lines.append(f"{prefix}[{item.get('createdAt', '')}] {item.get('comment', '')}")
+        return "\n\n".join(lines) if lines else "メモはまだありません。"
+
     def save_detail_feedback(self, exam, text_widget, existing_widget):
         comment = text_widget.get("1.0", "end").strip()
         if not comment:
@@ -714,7 +1194,7 @@ class KakomonApp(tk.Tk):
         text_widget.delete("1.0", "end")
         existing_widget.configure(state="normal")
         existing_widget.delete("1.0", "end")
-        existing_widget.insert("1.0", self.detail_feedback_text(exam["id"]))
+        existing_widget.insert("1.0", self.detail_feedback_text_for_exam(exam))
         existing_widget.configure(state="disabled")
         self.render_table()
         self.update_selected_detail()
@@ -735,6 +1215,7 @@ class KakomonApp(tk.Tk):
                 "teacher": exam.get("teacher", ""),
                 "group": exam.get("group", ""),
                 "testType": exam.get("testType", ""),
+                "testNumber": exam.get("testNumber", ""),
                 "sourceSite": exam.get("sourceSite", ""),
             },
         })
@@ -743,18 +1224,41 @@ class KakomonApp(tk.Tk):
     def open_exam_preferred(self, exam):
         if local_file_exists(exam):
             self.open_path(exam["localFile"])
-        elif exam.get("driveUrl"):
-            webbrowser.open(exam["driveUrl"])
+        else:
+            self.open_exam_drive_url(exam)
+
+    def open_exam_drive_url(self, exam):
+        pages = self.page_group_exams(exam)
+        if len(pages) > 1:
+            page = self.ask_page_to_open(pages)
+            if not page:
+                return
+            webbrowser.open(page["driveUrl"])
+        elif pages and pages[0].get("driveUrl"):
+            webbrowser.open(pages[0]["driveUrl"])
         else:
             messagebox.showinfo("過去問検索", "ファイルもDriveリンクも登録されていません。")
 
     def open_exam_file_location(self, exam):
         if local_file_exists(exam):
             self.open_path_location(exam["localFile"])
-        elif exam.get("driveUrl"):
-            webbrowser.open(exam["driveUrl"])
         else:
-            messagebox.showinfo("過去問検索", "ファイルもDriveリンクも登録されていません。")
+            self.open_exam_drive_url(exam)
+
+    def ask_page_to_open(self, pages):
+        page_numbers = [int(page.get("pageNumber") or index) for index, page in enumerate(pages, start=1)]
+        first_page = min(page_numbers)
+        last_page = max(page_numbers)
+        choice = simpledialog.askinteger(
+            "ページを選択",
+            f"Google Driveで開くページを入力してください。\n{first_page}〜{last_page}ページ目",
+            parent=self,
+            minvalue=first_page,
+            maxvalue=last_page,
+        )
+        if choice is None:
+            return None
+        return next((page for page in pages if int(page.get("pageNumber") or 0) == choice), None)
 
     def download_exam_from_detail(self, exam, window):
         if local_file_exists(exam):

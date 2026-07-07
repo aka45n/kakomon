@@ -12,7 +12,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = ROOT / "data" / "exams.json"
-REPORT_PATH = ROOT / "data" / "kuwiki_unresolved.json"
 KUWIKI_API = "https://www.kuwiki.net/api/exams?q="
 USER_AGENT = "Mozilla/5.0 (compatible; kakomon-kuwiki-importer/1.0)"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -309,7 +308,6 @@ def main() -> None:
 
     existing.sort(key=lambda item: (item.get("subject", ""), item.get("year", ""), item.get("teacher", ""), item.get("id", "")))
     DATA_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    REPORT_PATH.write_text(json.dumps(unresolved, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"courses={len(courses)} imported={imported} total={len(existing)} unresolved={len(unresolved)}")
 
 

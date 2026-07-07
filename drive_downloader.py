@@ -35,8 +35,7 @@ def download_exam_file(exam_id):
         return download_page_group(exams, exam)
 
     content, filename = download_drive_content(exam["driveUrl"])
-    filename = filename or default_filename(exam)
-    target = unique_target_path(FILES_DIR / safe_path_part(filename))
+    target = unique_target_path(FILES_DIR / exam_filename(exam, suffix=downloaded_suffix(filename, exam)))
     FILES_DIR.mkdir(exist_ok=True)
     target.write_bytes(content)
 
@@ -53,9 +52,7 @@ def download_page_group(exams, exam):
         raise ValueError("ページ結合対象が見つかりません。")
 
     FILES_DIR.mkdir(exist_ok=True)
-    target = unique_target_path(FILES_DIR / safe_path_part(default_filename(exam)))
-    if target.suffix.lower() != ".pdf":
-        target = target.with_suffix(".pdf")
+    target = unique_target_path(FILES_DIR / exam_filename(exam, suffix=".pdf"))
 
     with tempfile.TemporaryDirectory() as tmpdir:
         page_paths = []
@@ -218,10 +215,34 @@ def response_filename(response):
     return None
 
 
-def default_filename(exam):
-    parts = [exam.get("year"), exam.get("subject"), exam.get("teacher"), exam.get("group"), exam.get("testType")]
-    stem = "_".join(safe_path_part(part) for part in parts if part)
-    return f"{stem or exam['id']}.pdf"
+def exam_filename(exam, suffix=None):
+    suffix = suffix or ".pdf"
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+    subject = safe_filename_text(exam.get("subject") or exam.get("id") or "過去問")
+    teacher = safe_filename_text(clean_teacher_name(exam.get("teacher", "")))
+    year = safe_filename_text(exam.get("year", ""))
+    return f"{subject}({teacher}){year}{suffix.lower()}"
+
+
+def clean_teacher_name(value):
+    return re.sub(r"\s+", "", str(value))
+
+
+def downloaded_suffix(filename, exam):
+    suffix = Path(filename or "").suffix.lower()
+    if suffix:
+        return suffix
+    suffix = suffix_from_url(exam.get("driveUrl", ""))
+    return suffix or ".pdf"
+
+
+def safe_filename_text(value):
+    value = str(value).strip()
+    value = value.replace("/", "_").replace(":", "_")
+    value = re.sub(r"[\x00-\x1f]", "", value)
+    value = re.sub(r"\s+", "", value)
+    return value or ""
 
 
 def safe_path_part(value):
