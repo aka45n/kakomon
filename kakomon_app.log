@@ -1,0 +1,22 @@
+==== Tue Jul  7 20:34:49 JST 2026 ====
+APP_ROOT=/Users/akamatsunaoaki/Documents/kakomon
+RESOURCE_ROOT=/Users/akamatsunaoaki/Documents/kakomon/Kakomon.app/Contents/Resources
+KAKOMON_ROOT=/Users/akamatsunaoaki/Library/Application Support/Kakomon
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+PYTHON=/Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+Python 3.14.5
+==== Tue Jul  7 20:38:00 JST 2026 ====
+APP_ROOT=/Users/akamatsunaoaki/Documents/kakomon
+RESOURCE_ROOT=/Users/akamatsunaoaki/Documents/kakomon/Kakomon.app/Contents/Resources
+KAKOMON_ROOT=/Users/akamatsunaoaki/Library/Application Support/Kakomon
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+PYTHON=/Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+Python 3.14.5
+==== Tue Jul  7 20:42:51 JST 2026 ====
+APP_ROOT=/Users/akamatsunaoaki/Documents/kakomon
+RESOURCE_ROOT=/Users/akamatsunaoaki/Documents/kakomon/Kakomon.app/Contents/Resources
+KAKOMON_ROOT=/Users/akamatsunaoaki/Library/Application Support/Kakomon
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+PYTHON=/Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+Python 3.14.5
+2026-07-07 20:50:44.594 Python[34232:1965337] error messaging the mach port for IMKCFRunLoopWakeUpReliable
