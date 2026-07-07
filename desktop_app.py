@@ -29,6 +29,28 @@ COURSE_GROUPS = (
     "少人数教育科目群",
     "工学部専門科目",
 )
+SORT_LABELS = {
+    "year_desc": "年度が新しい順",
+    "year_asc": "年度が古い順",
+    "subject_asc": "科目名 昇順",
+    "subject_desc": "科目名 降順",
+    "teacher_asc": "教師名 昇順",
+    "teacher_desc": "教師名 降順",
+    "group_asc": "群 昇順",
+    "group_desc": "群 降順",
+    "test_type_asc": "種別 昇順",
+    "test_type_desc": "種別 降順",
+    "source_site_asc": "取得元 昇順",
+    "source_site_desc": "取得元 降順",
+}
+SORT_COLUMNS = {
+    "year": ("year_asc", "year_desc"),
+    "subject": ("subject_asc", "subject_desc"),
+    "teacher": ("teacher_asc", "teacher_desc"),
+    "group": ("group_asc", "group_desc"),
+    "test_type": ("test_type_asc", "test_type_desc"),
+    "source_site": ("source_site_asc", "source_site_desc"),
+}
 MISSING_LOCAL_FILE_VALUES = ("", "未保存", None)
 
 
@@ -193,12 +215,13 @@ class KakomonApp(tk.Tk):
         self.year_var = tk.StringVar()
         self.group_var = tk.StringVar()
         self.test_type_var = tk.StringVar()
-        self.sort_var = tk.StringVar(value="年度が新しい順")
+        self.sort_var = tk.StringVar(value="year_desc")
         self.status_var = tk.StringVar(value="準備中")
         self.local_file_var = tk.StringVar(value="ローカルファイル: 未選択")
         self.source_site_var = tk.StringVar(value="取得元: 未選択")
         self.notes_var = tk.StringVar(value="注釈: 未選択")
         self.feedback_summary_var = tk.StringVar(value="メモ: 未選択")
+        self.tree_headings = {}
 
         self.ensure_data_store()
         self.create_widgets()
@@ -314,15 +337,6 @@ class KakomonApp(tk.Tk):
 
         self.count_label = ttk.Label(toolbar, text="0件", font=("", 16, "bold"))
         self.count_label.grid(row=0, column=0, sticky="w")
-        ttk.Label(toolbar, text="並び替え").grid(row=0, column=1, sticky="e", padx=(12, 6))
-        self.sort_combo = ttk.Combobox(
-            toolbar,
-            textvariable=self.sort_var,
-            values=("年度が新しい順", "年度が古い順", "科目名順", "教師名順"),
-            state="readonly",
-            width=18,
-        )
-        self.sort_combo.grid(row=0, column=2, sticky="e")
 
         table_frame = ttk.Frame(self.main_frame)
         table_frame.grid(row=1, column=0, sticky="nsew")
@@ -331,7 +345,7 @@ class KakomonApp(tk.Tk):
 
         columns = ("year", "subject", "teacher", "group", "test_type", "source_site", "feedback_count")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
-        headings = {
+        self.tree_headings = {
             "year": "年度",
             "subject": "科目名",
             "teacher": "教師名",
@@ -350,7 +364,10 @@ class KakomonApp(tk.Tk):
             "feedback_count": 70,
         }
         for column in columns:
-            self.tree.heading(column, text=headings[column])
+            if column in SORT_COLUMNS:
+                self.tree.heading(column, text=self.heading_text(column), command=lambda selected=column: self.sort_by_column(selected))
+            else:
+                self.tree.heading(column, text=self.tree_headings[column])
             self.tree.column(column, width=widths[column], minwidth=60, stretch=column == "subject")
 
         y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
@@ -404,6 +421,33 @@ class KakomonApp(tk.Tk):
         for variable in (self.year_var, self.group_var, self.test_type_var):
             variable.trace_add("write", lambda *_: self.apply_filters_if_searched())
         self.sort_var.trace_add("write", lambda *_: self.apply_filters())
+
+    def heading_text(self, column):
+        label = self.tree_headings.get(column, column)
+        sort_key = self.sort_var.get()
+        if sort_key == f"{column}_asc":
+            return f"{label} ↑"
+        if sort_key == f"{column}_desc":
+            return f"{label} ↓"
+        return label
+
+    def update_heading_sort_indicators(self):
+        for column in self.tree_headings:
+            if column in SORT_COLUMNS:
+                self.tree.heading(column, text=self.heading_text(column), command=lambda selected=column: self.sort_by_column(selected))
+            else:
+                self.tree.heading(column, text=self.tree_headings[column], command="")
+
+    def sort_by_column(self, column):
+        if column not in SORT_COLUMNS:
+            return
+        ascending, descending = SORT_COLUMNS[column]
+        current = self.sort_var.get()
+        if column == "year":
+            next_sort = ascending if current == descending else descending
+        else:
+            next_sort = descending if current == ascending else ascending
+        self.sort_var.set(next_sort)
 
     def focus_clicked_widget(self, event):
         try:
@@ -490,14 +534,7 @@ class KakomonApp(tk.Tk):
             if self.matches(exam)
         ]
         self.filtered = self.group_filtered_exams(self.filtered)
-        if self.sort_var.get() == "年度が新しい順":
-            self.filtered.sort(key=self.sort_key_newest)
-        elif self.sort_var.get() == "年度が古い順":
-            self.filtered.sort(key=self.sort_key_oldest)
-        elif self.sort_var.get() == "科目名順":
-            self.filtered.sort(key=lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)))
-        elif self.sort_var.get() == "教師名順":
-            self.filtered.sort(key=lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)))
+        self.sort_filtered()
 
         self.render_table()
         if not self.is_filter_focus(previous_focus):
@@ -554,7 +591,27 @@ class KakomonApp(tk.Tk):
     def sort_key_oldest(self, exam):
         return (year_sort_value(exam.get("year", "")), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
 
+    def sort_filtered(self):
+        sort_key = self.sort_var.get()
+        sorters = {
+            "year_desc": (self.sort_key_newest, False),
+            "year_asc": (self.sort_key_oldest, False),
+            "subject_asc": (lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "subject_desc": (lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "teacher_asc": (lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "teacher_desc": (lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "group_asc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "group_desc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "test_type_asc": (lambda exam: (display_test_type(exam), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "test_type_desc": (lambda exam: (display_test_type(exam), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "source_site_asc": (lambda exam: (exam.get("sourceSite", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "source_site_desc": (lambda exam: (exam.get("sourceSite", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+        }
+        key, reverse = sorters.get(sort_key, sorters["year_desc"])
+        self.filtered.sort(key=key, reverse=reverse)
+
     def render_table(self):
+        self.update_heading_sort_indicators()
         self.tree.delete(*self.tree.get_children())
         for exam in self.filtered:
             self.tree.insert(
@@ -586,7 +643,6 @@ class KakomonApp(tk.Tk):
             self.year_combo,
             self.group_combo,
             self.test_type_combo,
-            self.sort_combo,
         )
 
     def focus_widget(self, widget):
