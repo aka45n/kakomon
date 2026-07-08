@@ -13,6 +13,7 @@ import tempfile
 ROOT = Path(os.environ.get("KAKOMON_ROOT", Path(__file__).resolve().parent))
 DATA_PATH = ROOT / "data" / "exams.json"
 FILES_DIR = ROOT / "files"
+DRIVE_FILES_DIR = FILES_DIR / "drive"
 CA_BUNDLE_CANDIDATES = (
     Path("/etc/ssl/cert.pem"),
     Path("/opt/homebrew/etc/ca-certificates/cert.pem"),
@@ -35,11 +36,11 @@ def download_exam_file(exam_id):
         return download_page_group(exams, exam)
 
     content, filename = download_drive_content(exam["driveUrl"])
-    target = unique_target_path(FILES_DIR / exam_filename(exam, suffix=downloaded_suffix(filename, exam)))
-    FILES_DIR.mkdir(exist_ok=True)
+    target = unique_target_path(DRIVE_FILES_DIR / exam_filename(exam, suffix=downloaded_suffix(filename, exam)))
+    DRIVE_FILES_DIR.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
 
-    exam["localFile"] = f"./files/{target.name}"
+    exam["localFile"] = f"./files/drive/{target.name}"
     DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"localFile": exam["localFile"]}
 
@@ -51,8 +52,8 @@ def download_page_group(exams, exam):
     if not pages:
         raise ValueError("ページ結合対象が見つかりません。")
 
-    FILES_DIR.mkdir(exist_ok=True)
-    target = unique_target_path(FILES_DIR / exam_filename(exam, suffix=".pdf"))
+    DRIVE_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    target = unique_target_path(DRIVE_FILES_DIR / exam_filename(exam, suffix=".pdf"))
 
     with tempfile.TemporaryDirectory() as tmpdir:
         page_paths = []
@@ -66,7 +67,7 @@ def download_page_group(exams, exam):
             page_paths.append(page_path)
         combine_page_files(page_paths, target)
 
-    local_file = f"./files/{target.name}"
+    local_file = f"./files/drive/{target.name}"
     for page in pages:
         page["localFile"] = local_file
     DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

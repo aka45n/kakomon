@@ -16,6 +16,8 @@ from drive_downloader import DATA_PATH, FILES_DIR, ROOT, download_exam_file
 
 FEEDBACK_PATH = ROOT / "data" / "feedback.json"
 EDIT_HISTORY_PATH = ROOT / "data" / "edit_history.json"
+MANUAL_FILES_DIR = FILES_DIR / "manual"
+DRIVE_FILES_DIR = FILES_DIR / "drive"
 SEED_ROOT = Path(os.environ["KAKOMON_SEED_ROOT"]) if os.environ.get("KAKOMON_SEED_ROOT") else None
 EDIT_HISTORY_LIMIT = 30
 TEST_TYPES = ("小テスト", "定期テスト")
@@ -262,6 +264,8 @@ class KakomonApp(tk.Tk):
     def ensure_data_store(self):
         (ROOT / "data").mkdir(parents=True, exist_ok=True)
         FILES_DIR.mkdir(parents=True, exist_ok=True)
+        MANUAL_FILES_DIR.mkdir(parents=True, exist_ok=True)
+        DRIVE_FILES_DIR.mkdir(parents=True, exist_ok=True)
 
         seed_data_dir = SEED_ROOT / "data" if SEED_ROOT else None
         for name, default_content in (
@@ -1099,13 +1103,13 @@ class KakomonApp(tk.Tk):
         if not source.exists():
             messagebox.showwarning("過去問検索", f"ファイルが見つかりません。\n{source}")
             return
-        FILES_DIR.mkdir(parents=True, exist_ok=True)
-        target = FILES_DIR / exam_rule_filename(subject, teacher, full_year, source.suffix, test_type, test_number)
+        MANUAL_FILES_DIR.mkdir(parents=True, exist_ok=True)
+        target = MANUAL_FILES_DIR / exam_rule_filename(subject, teacher, full_year, source.suffix, test_type, test_number)
         if target.exists():
             messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{target.name}")
             return
         shutil.copyfile(source, target)
-        local_file = f"./files/{target.name}"
+        local_file = f"./files/manual/{target.name}"
 
         now = datetime.now().strftime("%Y%m%d%H%M%S")
         exam = {
@@ -1279,15 +1283,16 @@ class KakomonApp(tk.Tk):
                 test_number,
                 exam.get("sourceSite", ""),
             )
-        target_path = FILES_DIR / target_name
+        target_dir = MANUAL_FILES_DIR if self.is_manual_exam(exam) else DRIVE_FILES_DIR
+        target_path = target_dir / target_name
         if current_path.resolve() == target_path.resolve():
             return ""
         if target_path.exists():
             messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{target_path.name}")
             return None
-        FILES_DIR.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
         current_path.rename(target_path)
-        return f"./files/{target_path.name}"
+        return f"./files/{target_dir.name}/{target_path.name}"
 
     def is_manual_exam(self, exam):
         return exam.get("sourceSite") == "手動追加" or str(exam.get("id", "")).startswith("manual-")
