@@ -5,10 +5,15 @@ __pycache__/
 
 # Logs and local runtime output
 *.log
-logs/
+logs/*
+!logs/.gitkeep
 
 # macOS Finder metadata
 .DS_Store
+._*
+
+# Local or stale macOS app signing metadata
+*.app/Contents/_CodeSignature/
 
 # Local app notes/state
 data/feedback.json
@@ -16,7 +21,8 @@ data/edit_history.json
 過去問検索.app/Contents/Resources/data/feedback.json
 過去問検索.app/Contents/Resources/data/edit_history.json
 
-# Downloaded Drive files; keep the directory via .gitkeep
+# Downloaded Drive files; keep the directory via .gitkeep.
+# Manually added exams under files/manual/ are intentionally tracked.
 files/drive/*
 !files/drive/.gitkeep
 過去問検索.app/Contents/Resources/files/drive/*
