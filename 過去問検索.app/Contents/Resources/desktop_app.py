@@ -410,17 +410,19 @@ class KakomonApp(tk.Tk):
 
         footer_frame = ttk.Frame(self.main_frame)
         footer_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        footer_frame.columnconfigure(4, weight=1)
-        ttk.Button(footer_frame, text="詳細を表示", command=self.open_detail_page).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(footer_frame, text="編集", command=self.open_edit_exam_dialog).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(footer_frame, text="ファイルの場所を開く", command=self.open_file_location).grid(row=0, column=2, padx=(0, 8))
+        footer_frame.columnconfigure(5, weight=1)
+        ttk.Button(footer_frame, text="開く", command=self.open_preferred).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(footer_frame, text="詳細を表示", command=self.open_detail_page).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(footer_frame, text="編集", command=self.open_edit_exam_dialog).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(footer_frame, text="ファイルの場所を開く", command=self.open_file_location).grid(row=0, column=3, padx=(0, 8))
         self.download_button = ttk.Button(footer_frame, text="Driveからローカル保存", command=self.download_selected, state="disabled")
-        self.download_button.grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(footer_frame, textvariable=self.status_var).grid(row=0, column=4, sticky="e")
+        self.download_button.grid(row=0, column=4, padx=(0, 8))
+        ttk.Label(footer_frame, textvariable=self.status_var).grid(row=0, column=5, sticky="e")
         self.show_landing_layout()
 
     def create_context_menu(self):
         self.context_menu = tk.Menu(self, tearoff=False)
+        self.context_menu.add_command(label="開く", command=self.open_preferred)
         self.context_menu.add_command(label="詳細を表示", command=self.open_detail_page)
         self.context_menu.add_command(label="編集", command=self.open_edit_exam_dialog)
         self.context_menu.add_command(label="ファイルの場所を開く", command=self.open_file_location)
@@ -969,7 +971,60 @@ class KakomonApp(tk.Tk):
         )
         self.bind_return_focus(test_number_entry, notes)
         self.bind_teacher_cleaner(values["teacher"])
+        self.enable_undo_for_form(file_entry, year_entry, teacher_entry, subject_entry, test_number_entry, notes)
         window.after_idle(lambda: (window.focus_force(), year_entry.focus_set()) if window.winfo_exists() else None)
+
+    def enable_undo_for_form(self, *widgets):
+        for widget in widgets:
+            if isinstance(widget, tk.Text):
+                widget.configure(undo=True, maxundo=100, autoseparators=True)
+                widget.bind("<Control-z>", self.undo_text_widget, add="+")
+                widget.bind("<Command-z>", self.undo_text_widget, add="+")
+            elif isinstance(widget, ttk.Entry):
+                self.enable_entry_undo(widget)
+
+    def undo_text_widget(self, event):
+        try:
+            event.widget.edit_undo()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def enable_entry_undo(self, entry):
+        state = {
+            "history": [entry.get()],
+            "undoing": False,
+        }
+
+        def remember():
+            if not entry.winfo_exists() or state["undoing"]:
+                return
+            value = entry.get()
+            if state["history"][-1] != value:
+                state["history"].append(value)
+                if len(state["history"]) > 100:
+                    state["history"].pop(0)
+
+        def schedule_remember(_event=None):
+            entry.after_idle(remember)
+
+        def undo(_event=None):
+            if len(state["history"]) <= 1:
+                return "break"
+            state["undoing"] = True
+            state["history"].pop()
+            previous = state["history"][-1]
+            entry.delete(0, "end")
+            entry.insert(0, previous)
+            entry.icursor("end")
+            state["undoing"] = False
+            return "break"
+
+        entry.bind("<KeyRelease>", schedule_remember, add="+")
+        entry.bind("<<Paste>>", schedule_remember, add="+")
+        entry.bind("<<Cut>>", schedule_remember, add="+")
+        entry.bind("<Control-z>", undo, add="+")
+        entry.bind("<Command-z>", undo, add="+")
 
     def bind_teacher_cleaner(self, variable):
         cleaning = {"active": False}
@@ -1202,6 +1257,7 @@ class KakomonApp(tk.Tk):
         test_type_combo.bind("<Return>", lambda _: self.focus_test_number_or_notes(values["testType"], test_number_entry, notes))
         self.bind_return_focus(test_number_entry, notes)
         self.bind_teacher_cleaner(values["teacher"])
+        self.enable_undo_for_form(year_entry, teacher_entry, subject_entry, test_number_entry, notes)
         window.after_idle(lambda: (window.focus_force(), year_entry.focus_set()) if window.winfo_exists() else None)
 
     def save_exam_edits(self, exam, values, notes_widget, window):
