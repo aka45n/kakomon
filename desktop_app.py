@@ -159,8 +159,31 @@ def test_type_filename_label(test_type, test_number=""):
     return test_type
 
 
-def display_test_type(exam):
-    test_type = exam.get("testType", "")
+def exam_test_types(exam):
+    types = []
+    for test_type in [exam.get("testType", ""), *(exam.get("alternateTestTypes") or [])]:
+        if test_type in TEST_TYPES and test_type not in types:
+            types.append(test_type)
+    return types or [exam.get("testType", "")]
+
+
+def exam_years(exam):
+    years = []
+    for year in [exam.get("year", ""), *(exam.get("alternateYears") or [])]:
+        year = str(year or "").strip()
+        if year and year not in years:
+            years.append(year)
+    return years or [exam.get("year", "")]
+
+
+def display_year(exam, alternate_index=0):
+    years = exam_years(exam)
+    return years[alternate_index % len(years)]
+
+
+def display_test_type(exam, alternate_index=0):
+    test_types = exam_test_types(exam)
+    test_type = test_types[alternate_index % len(test_types)]
     test_number = exam.get("testNumber")
     if test_type == "小テスト" and test_number:
         return f"小テスト{test_number}"
@@ -223,6 +246,7 @@ class KakomonApp(tk.Tk):
         self.notes_var = tk.StringVar(value="注釈: 未選択")
         self.feedback_summary_var = tk.StringVar(value="メモ: 未選択")
         self.tree_headings = {}
+        self.test_type_display_tick = 0
 
         self.ensure_data_store()
         self.create_widgets()
@@ -231,6 +255,7 @@ class KakomonApp(tk.Tk):
         self.bind_events()
         self.clear_results("検索条件を指定して検索してください")
         self.focus_landing_search()
+        self.schedule_test_type_display_refresh()
 
     def ensure_data_store(self):
         (ROOT / "data").mkdir(parents=True, exist_ok=True)
@@ -491,7 +516,7 @@ class KakomonApp(tk.Tk):
         return changed
 
     def refresh_filter_options(self):
-        years = [""] + sorted(self.unique_values("year"), key=year_sort_value, reverse=True)
+        years = [""] + sorted(self.unique_year_values(), key=year_sort_value, reverse=True)
         groups = [""] + list(COURSE_GROUPS)
         test_types = [""] + list(TEST_TYPES)
         for combo in (self.year_combo, self.landing_year_combo):
@@ -503,6 +528,9 @@ class KakomonApp(tk.Tk):
 
     def unique_values(self, field):
         return {exam.get(field, "") for exam in self.exams if exam.get(field)}
+
+    def unique_year_values(self):
+        return {year for exam in self.exams for year in exam_years(exam) if year}
 
     def reset_filters(self):
         self.has_searched = False
@@ -578,11 +606,11 @@ class KakomonApp(tk.Tk):
             return False
         if teacher_query and teacher_query not in str(exam.get("teacher", "")).lower():
             return False
-        if self.year_var.get() and exam.get("year") != self.year_var.get():
+        if self.year_var.get() and self.year_var.get() not in exam_years(exam):
             return False
         if self.group_var.get() and normalize_group(exam.get("group")) != self.group_var.get():
             return False
-        if self.test_type_var.get() and exam.get("testType") != self.test_type_var.get():
+        if self.test_type_var.get() and self.test_type_var.get() not in exam_test_types(exam):
             return False
         return True
 
@@ -620,17 +648,33 @@ class KakomonApp(tk.Tk):
                 "end",
                 iid=exam["id"],
                 values=(
-                    exam.get("year", ""),
+                    display_year(exam, self.test_type_display_tick),
                     exam.get("subject", ""),
                     exam.get("teacher", ""),
                     normalize_group(exam.get("group", "")),
-                    display_test_type(exam),
+                    display_test_type(exam, self.test_type_display_tick),
                     exam.get("sourceSite", ""),
                     self.feedback_count_for_exam(exam),
                 ),
             )
         self.count_label.config(text=f"{len(self.filtered)}件")
         self.update_selected_detail()
+
+    def schedule_test_type_display_refresh(self):
+        self.after(2000, self.refresh_alternating_test_type_display)
+
+    def refresh_alternating_test_type_display(self):
+        self.test_type_display_tick += 1
+        for item_id in self.tree.get_children():
+            exam = next((item for item in self.exams if item.get("id") == item_id), None)
+            if not exam or (len(exam_test_types(exam)) < 2 and len(exam_years(exam)) < 2):
+                continue
+            values = list(self.tree.item(item_id, "values"))
+            if len(values) >= 5:
+                values[0] = display_year(exam, self.test_type_display_tick)
+                values[4] = display_test_type(exam, self.test_type_display_tick)
+                self.tree.item(item_id, values=values)
+        self.schedule_test_type_display_refresh()
 
     def is_filter_focus(self, widget):
         return widget in (
