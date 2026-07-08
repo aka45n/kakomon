@@ -1,6 +1,15 @@
+# Python cache
 __pycache__/
-*.pyc
-kakomon_app.log
+*.py[cod]
+*$py.class
+
+# Logs and local runtime output
+*.log
+logs/
+
+# macOS Finder metadata
 .DS_Store
+
+# Local app notes/state
 data/feedback.json
 過去問検索.app/Contents/Resources/data/feedback.json
