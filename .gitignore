@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+kakomon_app.log
+.DS_Store
+data/feedback.json
+過去問検索.app/Contents/Resources/data/feedback.json
