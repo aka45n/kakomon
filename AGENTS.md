@@ -44,6 +44,7 @@ The app copies bundled seed data on first launch and later merges missing bundle
 ## Naming Rules
 
 - Manual upload filenames stay in the old local rule and do not include source site.
+- Multiple teacher names must be separated with `・`.
 - Drive-downloaded filenames use metadata, not the Drive filename:
 
 ```text
@@ -59,7 +60,7 @@ Examples:
 
 ## Import Rules
 
-- Valid `group` values are `人社群`, `自然群`, `外国語群`, `情報群`, `健康群`, `キャリア形成科目群`, `統合科学科目群`, `少人数教育科目群`, and `工学部専門科目`.
+- Valid `group` values are `人社群`, `自然群`, `外国語群`, `情報群`, `健康群`, `キャリア形成科目群`, `統合科学科目群`, `少人数教育科目群`, `工学部専門科目`, `理学部専門科目`, `総合人間学部専門科目`, and `大学院科目`.
 - KU1025 items under engineering specialty pages should use `工学部専門科目`, not `自然群` or `情報群`.
 - Do not infer 前期/後期 from subject suffix `1`, `2`, `１`, or `２`.
 - `A`/`B` and `Ⅰ`/`Ⅱ` may still be used for term inference.

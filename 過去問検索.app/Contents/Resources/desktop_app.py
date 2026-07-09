@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
-from drive_downloader import DATA_PATH, FILES_DIR, ROOT, download_exam_file
+from drive_downloader import DATA_PATH, FILES_DIR, ROOT, download_exam_file, write_exams
 
 
 FEEDBACK_PATH = ROOT / "data" / "feedback.json"
@@ -32,6 +32,8 @@ COURSE_GROUPS = (
     "統合科学科目群",
     "少人数教育科目群",
     "工学部専門科目",
+    "理学部専門科目",
+    "総合人間学部専門科目",
     "大学院科目",
 )
 SORT_LABELS = {
@@ -57,6 +59,15 @@ SORT_COLUMNS = {
     "source_site": ("source_site_asc", "source_site_desc"),
 }
 MISSING_LOCAL_FILE_VALUES = ("", "未保存", None)
+DASH_VARIANTS = str.maketrans({
+    "‐": "－",
+    "‑": "－",
+    "‒": "－",
+    "–": "－",
+    "—": "－",
+    "―": "－",
+    "−": "－",
+})
 
 
 def year_sort_value(value):
@@ -86,6 +97,15 @@ def normalize_group(value):
     return value
 
 
+def normalize_hyphens(value):
+    return str(value).translate(DASH_VARIANTS)
+
+
+def normalize_teacher_separators(value):
+    value = normalize_hyphens(value)
+    return re.sub(r"\s*[･、，,／/&＆]\s*", "・", value)
+
+
 def has_local_file(exam):
     return exam.get("localFile") not in MISSING_LOCAL_FILE_VALUES
 
@@ -110,7 +130,7 @@ def safe_filename_part(value):
 
 
 def safe_rule_filename_text(value):
-    value = str(value).strip()
+    value = normalize_hyphens(value).strip()
     value = value.replace("/", "_").replace(":", "_")
     value = re.sub(r"[\x00-\x1f]", "", value)
     value = re.sub(r"\s+", "", value)
@@ -118,7 +138,7 @@ def safe_rule_filename_text(value):
 
 
 def clean_teacher_name(value):
-    return re.sub(r"\s+", "", str(value))
+    return re.sub(r"\s+", "", normalize_teacher_separators(value))
 
 
 def exam_rule_filename(subject, teacher, year, suffix, test_type="", test_number=""):
@@ -283,6 +303,57 @@ class KakomonApp(tk.Tk):
                 target.write_text(default_content, encoding="utf-8")
         self.merge_seed_exams()
 
+    def mirror_root_candidates(self):
+        if not SEED_ROOT:
+            return []
+        candidates = [SEED_ROOT]
+        try:
+            candidates.append(SEED_ROOT.parents[2])
+        except IndexError:
+            pass
+
+        unique = []
+        seen = {ROOT.resolve()}
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            if (candidate / "data").exists() or (candidate / "過去問検索.app" / "Contents" / "Resources").exists():
+                unique.append(candidate)
+                seen.add(resolved)
+        return unique
+
+    def mirror_manual_file(self, local_file):
+        if (
+            not local_file
+            or not str(local_file).startswith("./files/")
+            or str(local_file).startswith("./files/drive/")
+        ):
+            return
+        source = (ROOT / local_file).resolve()
+        if not source.exists():
+            return
+        relative = Path(local_file[2:])
+        for mirror_root in self.mirror_root_candidates():
+            target = mirror_root / relative
+            if target.resolve() == source:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+
+    def remove_mirrored_manual_file(self, local_file):
+        if (
+            not local_file
+            or not str(local_file).startswith("./files/")
+            or str(local_file).startswith("./files/drive/")
+        ):
+            return
+        relative = Path(str(local_file)[2:])
+        for mirror_root in self.mirror_root_candidates():
+            target = mirror_root / relative
+            if target.exists():
+                target.unlink()
+
     def merge_seed_exams(self):
         if not SEED_ROOT:
             return
@@ -301,7 +372,7 @@ class KakomonApp(tk.Tk):
             return
         current_exams.extend(missing)
         current_exams.sort(key=lambda item: (item.get("subject", ""), item.get("year", ""), item.get("teacher", ""), item.get("id", "")))
-        target_path.write_text(json.dumps(current_exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_exams(current_exams)
 
     def create_widgets(self):
         self.columnconfigure(0, weight=0)
@@ -430,6 +501,7 @@ class KakomonApp(tk.Tk):
     def add_labeled_entry(self, parent, label, variable, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w")
         entry = ttk.Entry(parent, textvariable=variable, width=28)
+        self.guard_input_source_switch_space(entry)
         entry.grid(row=row + 1, column=0, sticky="ew", pady=(4, 8))
         return entry
 
@@ -446,7 +518,7 @@ class KakomonApp(tk.Tk):
         self.tree.bind("<Button-2>", self.show_context_menu)
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<<TreeviewSelect>>", lambda _: self.update_selected_detail())
-        self.bind_all("<KeyPress-space>", self.ignore_input_source_switch_space, add="+")
+        self.bind_all("<KeyPress>", self.ignore_input_source_switch_space, add="+")
         self.landing_subject_entry.bind("<Return>", lambda _: self.apply_filters())
         self.landing_teacher_entry.bind("<Return>", lambda _: self.apply_filters())
         self.subject_query_var.trace_add("write", lambda *_: self.apply_filters_if_searched())
@@ -493,9 +565,12 @@ class KakomonApp(tk.Tk):
         # Keep normal spaces, but drop spaces combined with modifier keys.
         control_mask = 0x0004
         option_or_command_mask = 0x0008 | 0x0010
-        if event.state & (control_mask | option_or_command_mask):
+        if (event.keysym == "space" or event.char == " ") and event.state & (control_mask | option_or_command_mask):
             return "break"
         return None
+
+    def guard_input_source_switch_space(self, widget):
+        widget.bind("<KeyPress>", self.ignore_input_source_switch_space, add="+")
 
     def select_tree_row_on_click(self, event):
         row_id = self.tree.identify_row(event.y)
@@ -516,7 +591,7 @@ class KakomonApp(tk.Tk):
     def load_data(self):
         self.exams = json.loads(DATA_PATH.read_text(encoding="utf-8"))
         if self.normalize_exam_groups():
-            DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            write_exams(self.exams)
         self.feedback = self.read_feedback()
         self.refresh_filter_options()
         self.status_var.set("データを読み込みました")
@@ -939,9 +1014,11 @@ class KakomonApp(tk.Tk):
         test_type_combo = self.add_form_combo(form, "テスト種別", values["testType"], 7, TEST_TYPES)
         test_number_label = ttk.Label(form, text="小テスト番号")
         test_number_entry = ttk.Entry(form, textvariable=values["testNumber"])
+        self.guard_input_source_switch_space(test_number_entry)
 
         ttk.Label(form, text="注釈").grid(row=9, column=0, sticky="nw", padx=(0, 10), pady=(8, 4))
         notes = tk.Text(form, height=5, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        self.guard_input_source_switch_space(notes)
         notes.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(8, 4))
 
         button_frame = ttk.Frame(form)
@@ -976,6 +1053,7 @@ class KakomonApp(tk.Tk):
 
     def enable_undo_for_form(self, *widgets):
         for widget in widgets:
+            self.guard_input_source_switch_space(widget)
             if isinstance(widget, tk.Text):
                 widget.configure(undo=True, maxundo=100, autoseparators=True)
                 widget.bind("<Control-z>", self.undo_text_widget, add="+")
@@ -1069,6 +1147,7 @@ class KakomonApp(tk.Tk):
         ttk.Label(parent, text="年度").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
         validate_command = (self.register(self.validate_year_edit), "%P")
         entry = ttk.Entry(parent, textvariable=variable, validate="key", validatecommand=validate_command)
+        self.guard_input_source_switch_space(entry)
         entry.grid(row=row, column=1, columnspan=2, sticky="ew", pady=5)
         entry.bind("<BackSpace>", self.protect_year_prefix)
         entry.bind("<Delete>", self.protect_year_prefix)
@@ -1114,6 +1193,7 @@ class KakomonApp(tk.Tk):
     def add_form_row(self, parent, label, variable, row, browse_command=None):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
         entry = ttk.Entry(parent, textvariable=variable)
+        self.guard_input_source_switch_space(entry)
         if browse_command:
             entry.grid(row=row, column=1, sticky="ew", pady=5)
             ttk.Button(parent, text="選択", command=browse_command).grid(row=row, column=2, sticky="ew", padx=(8, 0), pady=5)
@@ -1136,7 +1216,7 @@ class KakomonApp(tk.Tk):
         year = values["year"].get().strip()
         term = values["term"].get().strip()
         full_year = f"{year}{term}" if year and term else ""
-        subject = values["subject"].get().strip()
+        subject = normalize_hyphens(values["subject"].get()).strip()
         teacher = clean_teacher_name(values["teacher"].get())
         group = values["group"].get().strip()
         test_type = values["testType"].get().strip()
@@ -1177,12 +1257,13 @@ class KakomonApp(tk.Tk):
             "sourceSite": "手動追加",
             "localFile": local_file,
             "driveUrl": "",
-            "notes": notes_widget.get("1.0", "end").strip(),
+            "notes": normalize_hyphens(notes_widget.get("1.0", "end")).strip(),
         }
         if test_type == "小テスト" and test_number:
             exam["testNumber"] = test_number
         self.exams.append(exam)
-        DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.mirror_manual_file(local_file)
+        write_exams(self.exams)
         self.refresh_filter_options()
         if self.has_searched:
             self.apply_filters()
@@ -1228,9 +1309,11 @@ class KakomonApp(tk.Tk):
         test_type_combo = self.add_form_combo(form, "テスト種別", values["testType"], 6, TEST_TYPES)
         test_number_label = ttk.Label(form, text="小テスト番号")
         test_number_entry = ttk.Entry(form, textvariable=values["testNumber"])
+        self.guard_input_source_switch_space(test_number_entry)
 
         ttk.Label(form, text="注釈").grid(row=8, column=0, sticky="nw", padx=(0, 10), pady=(8, 4))
         notes = tk.Text(form, height=5, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        self.guard_input_source_switch_space(notes)
         notes.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(8, 4))
         notes.insert("1.0", exam.get("notes", ""))
 
@@ -1264,7 +1347,7 @@ class KakomonApp(tk.Tk):
         year = values["year"].get().strip()
         term = values["term"].get().strip()
         teacher = clean_teacher_name(values["teacher"].get())
-        subject = values["subject"].get().strip()
+        subject = normalize_hyphens(values["subject"].get()).strip()
         group = values["group"].get().strip()
         test_type = values["testType"].get().strip()
         test_number = values["testNumber"].get().strip()
@@ -1300,7 +1383,7 @@ class KakomonApp(tk.Tk):
             "subject": subject,
             "group": group,
             "testType": test_type,
-            "notes": notes_widget.get("1.0", "end").strip(),
+            "notes": normalize_hyphens(notes_widget.get("1.0", "end")).strip(),
         })
         if new_local_file:
             target["localFile"] = new_local_file
@@ -1310,7 +1393,8 @@ class KakomonApp(tk.Tk):
             target.pop("testNumber", None)
 
         self.record_edit_history(before_snapshot, self.exam_edit_snapshot(target))
-        DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.mirror_manual_file(target.get("localFile"))
+        write_exams(self.exams)
         self.refresh_filter_options()
         if self.has_searched:
             self.apply_filters()
@@ -1347,7 +1431,9 @@ class KakomonApp(tk.Tk):
             messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{target_path.name}")
             return None
         target_dir.mkdir(parents=True, exist_ok=True)
+        old_local_file = exam.get("localFile")
         current_path.rename(target_path)
+        self.remove_mirrored_manual_file(old_local_file)
         return f"./files/{target_dir.name}/{target_path.name}"
 
     def is_manual_exam(self, exam):
@@ -1372,7 +1458,8 @@ class KakomonApp(tk.Tk):
                 pass
             else:
                 local_path.unlink()
-        DATA_PATH.write_text(json.dumps(self.exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.remove_mirrored_manual_file(exam.get("localFile"))
+        write_exams(self.exams)
         self.refresh_filter_options()
         if self.has_searched:
             self.apply_filters()
@@ -1442,11 +1529,13 @@ class KakomonApp(tk.Tk):
             pady=8,
         )
         existing.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.guard_input_source_switch_space(existing)
         existing.insert("1.0", self.detail_feedback_text_for_exam(exam))
         existing.configure(state="disabled")
 
         ttk.Label(feedback_box, text="新しいメモ").grid(row=1, column=0, sticky="w", pady=(10, 4))
         new_feedback = tk.Text(feedback_box, height=4, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        self.guard_input_source_switch_space(new_feedback)
         new_feedback.grid(row=2, column=0, sticky="ew")
         ttk.Button(
             feedback_box,

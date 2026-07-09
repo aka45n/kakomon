@@ -827,8 +827,9 @@ def normalize_teacher(teacher: str) -> str:
     teacher = teacher.strip()
     if teacher in ("", "_", "不明") or teacher.lower() == "unknown":
         return ""
-    separator_count = sum(teacher.count(separator) for separator in ("・", "･", "-", "ー"))
-    if "他" in teacher or separator_count >= 3:
+    teacher = re.sub(r"\s*[･、，,／/&＆]\s*", "・", teacher)
+    teacher = re.sub(r"\s+", "", teacher)
+    if "他" in teacher:
         return ""
     return teacher
 
