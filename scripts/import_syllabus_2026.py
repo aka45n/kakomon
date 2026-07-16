@@ -28,10 +28,22 @@ AFFILIATION_WORDS = (
     "研究科|研究所|学研究科|学舎|学部|大学院|センター|機構|本部|大学|高等学校|"
     "病院|企業|財団|協会|機関|室|部門|専攻"
 )
+SECTION_CODE_RE = re.compile(
+    r"\s+(?:(?:[0-9]+[A-Za-zＡ-Ｚａ-ｚφΦ][0-9]+|[A-Za-z]{1,3}[0-9]{2,4}[a-z]?)"
+    r"(?:\s*[,，]\s*(?:[0-9]+[A-Za-zＡ-Ｚａ-ｚφΦ][0-9]+|[A-Za-z]{1,3}[0-9]{2,4}[a-z]?))*)$"
+)
 
 
 def clean(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def strip_section_codes(course: str) -> str:
+    previous = None
+    while course != previous:
+        previous = course
+        course = SECTION_CODE_RE.sub("", course).rstrip()
+    return course
 
 
 def header_text(text: str) -> str:
@@ -154,13 +166,14 @@ def main() -> None:
             all_records.extend(json.loads(supplemental_path.read_text()))
 
     for record in all_records:
+        record["授業科目名"] = strip_section_codes(record["授業科目名"])
         record["前身科目"] = predecessor(record["授業科目名"])
 
     json_path = output_dir / "syllabus_2026.json"
     csv_path = output_dir / "syllabus_2026.csv"
     json_path.write_text(json.dumps(all_records, ensure_ascii=False, indent=2) + "\n")
     with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(all_records[0]))
+        writer = csv.DictWriter(handle, fieldnames=list(all_records[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(all_records)
     print(f"wrote {len(all_records)} records to {json_path} and {csv_path}")
