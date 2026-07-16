@@ -99,12 +99,15 @@ def departments(block: str) -> str:
 def predecessor(course: str) -> str:
     if course == "情報学概論":
         return "数理工学概論"
+    if course.startswith("情報AI基礎演習"):
+        return "プログラミング入門"
     if (
-        course.startswith("情報AI基礎［工学部］")
-        and "（情報学科）" in course
+        course.startswith("情報AI基礎")
         and not course.startswith("情報AI基礎演習")
     ):
-        return "計算機科学概論"
+        if "（情報学科）" in course:
+            return "計算機科学概論"
+        return "情報基礎実践"
     return ""
 
 

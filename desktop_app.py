@@ -538,6 +538,10 @@ class KakomonApp(tk.Tk):
         self.download_button = ttk.Button(footer_frame, text="Driveからローカル保存", command=self.download_selected, state="disabled")
         self.download_button.grid(row=0, column=4, padx=(0, 8))
         ttk.Label(footer_frame, textvariable=self.status_var).grid(row=0, column=5, sticky="e")
+        ttk.Style().configure("HistoryLink.TLabel", foreground="#666666", font=("", 10, "underline"))
+        history_link = ttk.Label(footer_frame, text="編集履歴", style="HistoryLink.TLabel", cursor="hand2")
+        history_link.grid(row=0, column=6, padx=(10, 0), sticky="e")
+        history_link.bind("<Button-1>", lambda _event: self.open_edit_history_dialog())
         self.show_landing_layout()
 
     def create_context_menu(self):
@@ -673,7 +677,7 @@ class KakomonApp(tk.Tk):
         return changed
 
     def refresh_filter_options(self):
-        years = [""] + sorted(self.unique_year_values(), key=year_sort_value, reverse=True)
+        years = [""] + sorted(self.unique_year_values(), key=year_sort_value, reverse=True) + ["不明"]
         groups = [""] + list(COURSE_GROUPS)
         test_types = [""] + list(TEST_TYPES)
         source_sites = [""] + sorted(self.unique_values("sourceSite"))
@@ -1018,6 +1022,280 @@ class KakomonApp(tk.Tk):
         EDIT_HISTORY_PATH.parent.mkdir(exist_ok=True)
         EDIT_HISTORY_PATH.write_text(json.dumps(history[-EDIT_HISTORY_LIMIT:], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    def edit_history_field_label(self, field):
+        labels = {
+            "year": "年度",
+            "teacher": "教師名",
+            "subject": "科目名",
+            "group": "科目群",
+            "testType": "テスト種別",
+            "testNumber": "小テスト番号",
+            "sourceSite": "取得元",
+            "localFile": "ローカルファイル",
+            "driveUrl": "Drive URL",
+            "notes": "注釈",
+            "alternateTestTypes": "別テスト種別",
+            "alternateYears": "別年度",
+            "pageGroup": "ページグループ",
+            "pageNumber": "ページ番号",
+        }
+        return labels.get(field, field)
+
+    def edit_history_value_text(self, value):
+        if value is None:
+            return "(なし)"
+        if value == "":
+            return "(空欄)"
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    def edit_history_exam(self, entry):
+        exam_id = entry.get("examId")
+        return next((exam for exam in self.exams if exam.get("id") == exam_id), None)
+
+    def edit_history_matches_snapshot(self, exam, entry, snapshot_name):
+        snapshot = entry.get(snapshot_name) or {}
+        return all(
+            exam.get(field) == snapshot.get(field)
+            for field in entry.get("changedFields") or []
+            if field != "id"
+        )
+
+    def apply_edit_history_local_file(self, exam, desired_local_file):
+        current_local_file = exam.get("localFile")
+        if current_local_file == desired_local_file:
+            return True
+        current_path = local_file_path(exam)
+        if not current_path or not current_path.exists():
+            messagebox.showwarning("過去問検索", "履歴に対応するローカルファイルが見つからないため、変更を戻せません。")
+            return False
+        if not str(desired_local_file).startswith("./files/"):
+            messagebox.showwarning("過去問検索", "履歴のローカルファイル情報が不正なため、変更を戻せません。")
+            return False
+        desired_path = (ROOT / str(desired_local_file)[2:]).resolve()
+        try:
+            desired_path.relative_to(ROOT.resolve())
+        except ValueError:
+            messagebox.showwarning("過去問検索", "履歴のローカルファイル情報が不正なため、変更を戻せません。")
+            return False
+        if desired_path.exists() and current_path.resolve() != desired_path:
+            messagebox.showwarning("過去問検索", f"同名ファイルがすでに存在します。\n{desired_path.name}")
+            return False
+        desired_path.parent.mkdir(parents=True, exist_ok=True)
+        current_path.rename(desired_path)
+        self.remove_mirrored_manual_file(current_local_file)
+        self.update_shared_local_file_references(current_local_file, desired_local_file)
+        return True
+
+    def apply_edit_history_state(self, entry, snapshot_name):
+        exam = self.edit_history_exam(entry)
+        if not exam:
+            messagebox.showwarning("過去問検索", "履歴の対象となる過去問が見つかりません。")
+            return False
+        expected_snapshot = "after" if snapshot_name == "before" else "before"
+        if not self.edit_history_matches_snapshot(exam, entry, expected_snapshot):
+            messagebox.showwarning(
+                "過去問検索",
+                "この履歴より後に対象データが変更されているため、そのままでは操作できません。",
+            )
+            return False
+
+        snapshot = entry.get(snapshot_name) or {}
+        changed_fields = [field for field in entry.get("changedFields") or [] if field != "id"]
+        if "localFile" in changed_fields and not self.apply_edit_history_local_file(exam, snapshot.get("localFile")):
+            return False
+
+        shared_metadata_fields = {"year", "teacher", "subject", "group", "testType", "testNumber"}
+        for field in changed_fields:
+            if field == "localFile":
+                continue
+            targets = self.edit_metadata_targets(exam) if field in shared_metadata_fields else [exam]
+            for target in targets:
+                if field in snapshot:
+                    target[field] = snapshot[field]
+                else:
+                    target.pop(field, None)
+
+        self.mirror_manual_file(exam.get("localFile"))
+        write_exams(self.exams)
+        self.refresh_filter_options()
+        if self.has_searched:
+            self.apply_filters()
+        return True
+
+    def open_edit_history_dialog(self):
+        history_records = self.read_edit_history()
+        history = list(reversed(history_records))
+        window = tk.Toplevel(self)
+        window.title("編集履歴")
+        window.geometry("900x600")
+        window.minsize(740, 480)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        window.transient(self)
+        window.lift()
+        window.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog(window))
+
+        body = ttk.Frame(window, padding=16)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        body.rowconfigure(3, weight=1)
+
+        title_frame = ttk.Frame(body)
+        title_frame.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        title_frame.columnconfigure(0, weight=1)
+        ttk.Label(title_frame, text="編集履歴", font=("", 20, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(title_frame, text="直近30件のみ表示").grid(row=0, column=1, sticky="e")
+
+        table_frame = ttk.Frame(body)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        columns = ("edited_at", "subject", "changed_fields", "state")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse", height=10)
+        tree.heading("edited_at", text="編集日時")
+        tree.heading("subject", text="科目名")
+        tree.heading("changed_fields", text="変更項目")
+        tree.heading("state", text="状態")
+        tree.column("edited_at", width=150, minwidth=130, stretch=False)
+        tree.column("subject", width=230, minwidth=140, stretch=True)
+        tree.column("changed_fields", width=240, minwidth=160, stretch=True)
+        tree.column("state", width=90, minwidth=90, stretch=False)
+        table_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=table_scroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        table_scroll.grid(row=0, column=1, sticky="ns")
+
+        ttk.Label(body, text="変更内容").grid(row=2, column=0, sticky="w", pady=(12, 4))
+        detail_frame = ttk.Frame(body)
+        detail_frame.grid(row=3, column=0, sticky="nsew")
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.rowconfigure(0, weight=1)
+        detail = tk.Text(detail_frame, height=10, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical", command=detail.yview)
+        detail.configure(yscrollcommand=detail_scroll.set, state="disabled")
+        detail.grid(row=0, column=0, sticky="nsew")
+        detail_scroll.grid(row=0, column=1, sticky="ns")
+
+        entry_by_item = {}
+        for entry in history:
+            before = entry.get("before") or {}
+            after = entry.get("after") or {}
+            subject = after.get("subject") or before.get("subject") or "(科目名なし)"
+            changed_fields = entry.get("changedFields") or []
+            item = tree.insert("", "end", values=(
+                str(entry.get("editedAt") or "").replace("T", " "),
+                subject,
+                "・".join(self.edit_history_field_label(field) for field in changed_fields),
+                "取り消し済み" if entry.get("state") == "undone" else "適用中",
+            ))
+            entry_by_item[item] = entry
+
+        def show_selected_history(_event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            entry = entry_by_item.get(selection[0], {})
+            before = entry.get("before") or {}
+            after = entry.get("after") or {}
+            lines = [
+                f"編集日時: {str(entry.get('editedAt') or '').replace('T', ' ')}",
+                f"過去問ID: {entry.get('examId') or ''}",
+                "",
+            ]
+            for field in entry.get("changedFields") or []:
+                lines.extend((
+                    self.edit_history_field_label(field),
+                    f"変更前: {self.edit_history_value_text(before.get(field))}",
+                    f"変更後: {self.edit_history_value_text(after.get(field))}",
+                    "",
+                ))
+            detail.configure(state="normal")
+            detail.delete("1.0", "end")
+            detail.insert("1.0", "\n".join(lines).rstrip())
+            detail.configure(state="disabled")
+
+            state = entry.get("state", "applied")
+            undo_button.configure(state="normal" if state != "undone" else "disabled")
+            redo_button.configure(state="normal" if state == "undone" else "disabled")
+
+        def selected_history():
+            selection = tree.selection()
+            if not selection:
+                return None, None
+            item = selection[0]
+            return item, entry_by_item.get(item)
+
+        def open_selected_history_exam(_event=None):
+            _item, entry = selected_history()
+            if not entry:
+                return
+            exam = self.edit_history_exam(entry)
+            if not exam:
+                messagebox.showwarning("過去問検索", "履歴の対象となる過去問が見つかりません。")
+                return
+            self.open_detail_page(exam)
+
+        def change_history_state(snapshot_name, state, status_message):
+            item, entry = selected_history()
+            if not entry:
+                return
+            if snapshot_name == "before":
+                before = entry.get("before") or {}
+                after = entry.get("after") or {}
+                subject = after.get("subject") or before.get("subject") or "この過去問"
+                if not messagebox.askyesno(
+                    "変更を戻す",
+                    f"「{subject}」の選択した変更を戻しますか？",
+                    parent=window,
+                ):
+                    return
+            if not self.apply_edit_history_state(entry, snapshot_name):
+                return
+            entry["state"] = state
+            entry["stateChangedAt"] = datetime.now().isoformat(timespec="seconds")
+            self.write_edit_history(history_records)
+            tree.set(item, "state", "取り消し済み" if state == "undone" else "適用中")
+            self.status_var.set(status_message)
+            show_selected_history()
+
+        tree.bind("<<TreeviewSelect>>", show_selected_history)
+        tree.bind("<Double-1>", open_selected_history_exam)
+
+        action_frame = ttk.Frame(body)
+        action_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        action_frame.columnconfigure(1, weight=1)
+        detail_link = ttk.Label(action_frame, text="過去問の詳細を表示", style="HistoryLink.TLabel", cursor="hand2")
+        detail_link.grid(row=0, column=0, sticky="w")
+        detail_link.bind("<Button-1>", open_selected_history_exam)
+        undo_button = ttk.Button(
+            action_frame,
+            text="変更を戻す",
+            command=lambda: change_history_state("before", "undone", "履歴の変更を戻しました"),
+        )
+        undo_button.grid(row=0, column=2, padx=(8, 4))
+        redo_button = ttk.Button(
+            action_frame,
+            text="戻した変更をやり直す",
+            command=lambda: change_history_state("after", "applied", "戻した変更をやり直しました"),
+        )
+        redo_button.grid(row=0, column=3, padx=4)
+        ttk.Button(action_frame, text="閉じる", command=lambda: self.close_dialog(window)).grid(row=0, column=4, padx=(4, 0))
+        window.bind("<Escape>", lambda _event: self.close_dialog(window))
+
+        children = tree.get_children()
+        if children:
+            tree.selection_set(children[0])
+            tree.focus(children[0])
+            show_selected_history()
+        else:
+            detail.configure(state="normal")
+            detail.insert("1.0", "編集履歴はありません。")
+            detail.configure(state="disabled")
+        window.after_idle(lambda: (window.focus_force(), tree.focus_set()) if window.winfo_exists() else None)
+
     def exam_edit_snapshot(self, exam):
         keys = (
             "id",
@@ -1046,6 +1324,7 @@ class KakomonApp(tk.Tk):
         history.append({
             "editedAt": datetime.now().isoformat(timespec="seconds"),
             "examId": after.get("id") or before.get("id"),
+            "state": "applied",
             "changedFields": changed_fields,
             "before": before,
             "after": after,
@@ -1267,7 +1546,7 @@ class KakomonApp(tk.Tk):
         return entry
 
     def validate_year_edit(self, proposed):
-        return proposed == "不明" or bool(re.fullmatch(r"20\d{0,2}", proposed))
+        return proposed in {"", "2", "不", "不明"} or bool(re.fullmatch(r"20\d{0,2}", proposed))
 
     def bind_term_availability(self, year_var, term_var, term_combo):
         def update(*_):
