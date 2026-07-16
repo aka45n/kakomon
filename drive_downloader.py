@@ -14,6 +14,16 @@ ROOT = Path(os.environ.get("KAKOMON_ROOT", Path(__file__).resolve().parent))
 DATA_PATH = ROOT / "data" / "exams.json"
 FILES_DIR = ROOT / "files"
 DRIVE_FILES_DIR = FILES_DIR / "drive"
+SEED_ROOT = Path(os.environ["KAKOMON_SEED_ROOT"]) if os.environ.get("KAKOMON_SEED_ROOT") else None
+DASH_VARIANTS = str.maketrans({
+    "‐": "－",
+    "‑": "－",
+    "‒": "－",
+    "–": "－",
+    "—": "－",
+    "―": "－",
+    "−": "－",
+})
 CA_BUNDLE_CANDIDATES = (
     Path("/etc/ssl/cert.pem"),
     Path("/opt/homebrew/etc/ca-certificates/cert.pem"),
@@ -41,7 +51,7 @@ def download_exam_file(exam_id):
     target.write_bytes(content)
 
     exam["localFile"] = f"./files/drive/{target.name}"
-    DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_exams(exams)
     return {"localFile": exam["localFile"]}
 
 
@@ -70,8 +80,39 @@ def download_page_group(exams, exam):
     local_file = f"./files/drive/{target.name}"
     for page in pages:
         page["localFile"] = local_file
-    DATA_PATH.write_text(json.dumps(exams, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_exams(exams)
     return {"localFile": local_file}
+
+
+def mirror_data_paths():
+    paths = []
+    if SEED_ROOT:
+        paths.append(SEED_ROOT / "data" / "exams.json")
+        try:
+            repo_root = SEED_ROOT.parents[2]
+        except IndexError:
+            repo_root = None
+        if repo_root:
+            paths.append(repo_root / "data" / "exams.json")
+
+    unique = []
+    seen = {DATA_PATH.resolve()}
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        if path.exists() or (path.parent.exists() and (path.parent.parent / ".git").exists()):
+            unique.append(path)
+            seen.add(resolved)
+    return unique
+
+
+def write_exams(exams):
+    text = json.dumps(exams, ensure_ascii=False, indent=2) + "\n"
+    DATA_PATH.write_text(text, encoding="utf-8")
+    for path in mirror_data_paths():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 def combine_page_files(page_paths, target):
@@ -246,7 +287,16 @@ def test_type_filename_label(exam):
 
 
 def clean_teacher_name(value):
-    return re.sub(r"\s+", "", str(value))
+    return re.sub(r"\s+", "", normalize_teacher_separators(value))
+
+
+def normalize_hyphens(value):
+    return str(value).translate(DASH_VARIANTS)
+
+
+def normalize_teacher_separators(value):
+    value = normalize_hyphens(value)
+    return re.sub(r"\s*[･、，,／/&＆]\s*", "・", value)
 
 
 def downloaded_suffix(filename, exam):
@@ -258,7 +308,7 @@ def downloaded_suffix(filename, exam):
 
 
 def safe_filename_text(value):
-    value = str(value).strip()
+    value = normalize_hyphens(value).strip()
     value = value.replace("/", "_").replace(":", "_")
     value = re.sub(r"[\x00-\x1f]", "", value)
     value = re.sub(r"\s+", "", value)
