@@ -219,6 +219,21 @@ def exam_years(exam):
     return years or [exam.get("year", "")]
 
 
+def latest_exam_year(exam):
+    valid_years = [year for year in exam_years(exam) if year_sort_value(year) != (0, 0)]
+    if not valid_years:
+        return exam.get("year", "")
+    return max(valid_years, key=year_sort_value)
+
+
+def latest_year_sort_value(exam):
+    return year_sort_value(latest_exam_year(exam))
+
+
+def reverse_latest_year_sort_value(exam):
+    return reverse_year_sort_value(latest_exam_year(exam))
+
+
 def display_year(exam, alternate_index=0):
     years = exam_years(exam)
     return years[alternate_index % len(years)]
@@ -465,7 +480,7 @@ class KakomonApp(tk.Tk):
 
         self.count_label = ttk.Label(toolbar, text="0件", font=("", 16, "bold"))
         self.count_label.grid(row=0, column=0, sticky="w")
-        self.bulk_download_button = ttk.Button(toolbar, text="検索結果を一括保存", command=self.download_filtered, state="disabled")
+        self.bulk_download_button = ttk.Button(toolbar, text="検索結果を一括ダウンロード", command=self.download_filtered, state="disabled")
         self.bulk_download_button.grid(row=0, column=1, padx=(8, 8), sticky="e")
         ttk.Button(toolbar, text="ホームへ", command=self.show_home).grid(row=0, column=2, sticky="e")
 
@@ -714,6 +729,7 @@ class KakomonApp(tk.Tk):
         self.sort_filtered()
 
         self.render_table()
+        self.update_search_result_status()
         if not self.is_filter_focus(previous_focus):
             self.focus_results_table(select_first=True)
 
@@ -738,6 +754,12 @@ class KakomonApp(tk.Tk):
         self.status_var.set(message)
         self.bulk_download_button.configure(state="disabled")
         self.update_selected_detail()
+
+    def update_search_result_status(self):
+        if self.filtered:
+            self.status_var.set(f"検索結果: {len(self.filtered)}件")
+        else:
+            self.status_var.set("該当する過去問はありません")
 
     def show_landing_layout(self):
         self.filter_frame.grid_remove()
@@ -767,26 +789,26 @@ class KakomonApp(tk.Tk):
         return True
 
     def sort_key_newest(self, exam):
-        return (reverse_year_sort_value(exam.get("year", "")), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
+        return (reverse_latest_year_sort_value(exam), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
 
     def sort_key_oldest(self, exam):
-        return (year_sort_value(exam.get("year", "")), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
+        return (latest_year_sort_value(exam), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
 
     def sort_filtered(self):
         sort_key = self.sort_var.get()
         sorters = {
             "year_desc": (self.sort_key_newest, False),
             "year_asc": (self.sort_key_oldest, False),
-            "subject_asc": (lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
-            "subject_desc": (lambda exam: (exam.get("subject", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
-            "teacher_asc": (lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
-            "teacher_desc": (lambda exam: (exam.get("teacher", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
-            "group_asc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
-            "group_desc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
-            "test_type_asc": (lambda exam: (display_test_type(exam), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
-            "test_type_desc": (lambda exam: (display_test_type(exam), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
-            "source_site_asc": (lambda exam: (exam.get("sourceSite", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), False),
-            "source_site_desc": (lambda exam: (exam.get("sourceSite", ""), reverse_year_sort_value(exam.get("year", "")), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "subject_asc": (lambda exam: (exam.get("subject", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "subject_desc": (lambda exam: (exam.get("subject", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "teacher_asc": (lambda exam: (exam.get("teacher", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "teacher_desc": (lambda exam: (exam.get("teacher", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "group_asc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "group_desc": (lambda exam: (normalize_group(exam.get("group", "")), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "test_type_asc": (lambda exam: (display_test_type(exam), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "test_type_desc": (lambda exam: (display_test_type(exam), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), True),
+            "source_site_asc": (lambda exam: (exam.get("sourceSite", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), False),
+            "source_site_desc": (lambda exam: (exam.get("sourceSite", ""), reverse_latest_year_sort_value(exam), same_exam_condition_key(exam), test_order_value(exam)), True),
         }
         key, reverse = sorters.get(sort_key, sorters["year_desc"])
         self.filtered.sort(key=key, reverse=reverse)
@@ -1445,20 +1467,22 @@ class KakomonApp(tk.Tk):
         )
         if new_local_file is None:
             return
-        target.update({
+        metadata_updates = {
             "year": f"{year}{term}",
             "teacher": teacher,
             "subject": subject,
             "group": group,
             "testType": test_type,
-            "notes": normalize_hyphens(notes_widget.get("1.0", "end")).strip(),
-        })
+        }
+        for metadata_target in self.edit_metadata_targets(target):
+            metadata_target.update(metadata_updates)
+            if test_type == "小テスト" and test_number:
+                metadata_target["testNumber"] = test_number
+            else:
+                metadata_target.pop("testNumber", None)
+        target["notes"] = normalize_hyphens(notes_widget.get("1.0", "end")).strip()
         if new_local_file:
             self.update_shared_local_file_references(old_local_file, new_local_file)
-        if test_type == "小テスト" and test_number:
-            target["testNumber"] = test_number
-        else:
-            target.pop("testNumber", None)
 
         self.record_edit_history(before_snapshot, self.exam_edit_snapshot(target))
         self.mirror_manual_file(target.get("localFile"))
@@ -1469,6 +1493,13 @@ class KakomonApp(tk.Tk):
         self.status_var.set("過去問を編集しました")
         messagebox.showinfo("過去問検索", "過去問を編集しました。")
         self.close_dialog(window)
+
+    def edit_metadata_targets(self, exam):
+        page_group = exam.get("pageGroup")
+        if not page_group:
+            return [exam]
+        targets = [item for item in self.exams if item.get("pageGroup") == page_group]
+        return targets or [exam]
 
     def update_shared_local_file_references(self, old_local_file, new_local_file):
         if not old_local_file or not new_local_file:
@@ -1894,7 +1925,7 @@ class KakomonApp(tk.Tk):
             if not local_file_exists(exam) and not self.is_manual_exam(exam)
         )
         if not candidates:
-            messagebox.showinfo("過去問検索", "一括保存できる未保存ファイルはありません。")
+            messagebox.showinfo("過去問検索", "一括ダウンロードできる未保存ファイルはありません。")
             return
 
         details = [f"検索結果{len(self.filtered)}件のうち、未保存の{len(candidates)}件を保存します。"]
@@ -1904,13 +1935,13 @@ class KakomonApp(tk.Tk):
             details.append(f"手動追加{manual_items}件はスキップします。")
         if without_link:
             details.append(f"Driveリンクなし{without_link}件はスキップします。")
-        if not messagebox.askokcancel("検索結果を一括保存", "\n".join(details)):
+        if not messagebox.askokcancel("検索結果を一括ダウンロード", "\n".join(details)):
             return
 
         self.download_active = True
         self.download_button.configure(state="disabled")
         self.update_bulk_download_button()
-        self.status_var.set(f"一括保存中... 0/{len(candidates)}件")
+        self.status_var.set(f"一括ダウンロード中... 0/{len(candidates)}件")
         exam_ids = [exam["id"] for exam in candidates]
         thread = threading.Thread(target=self.download_filtered_worker, args=(exam_ids,), daemon=True)
         thread.start()
@@ -1928,7 +1959,7 @@ class KakomonApp(tk.Tk):
                     saved += 1
             except Exception as error:
                 failures.append((exam_id, str(error)))
-            self.after(0, lambda done=index, total=len(exam_ids): self.status_var.set(f"一括保存中... {done}/{total}件"))
+            self.after(0, lambda done=index, total=len(exam_ids): self.status_var.set(f"一括ダウンロード中... {done}/{total}件"))
         self.after(0, lambda: self.finish_filtered_download(saved, skipped, failures))
 
     def finish_filtered_download(self, saved, skipped, failures):
@@ -1936,19 +1967,19 @@ class KakomonApp(tk.Tk):
         self.load_data()
         self.apply_filters()
         if failures:
-            self.status_var.set("一括保存が一部失敗しました")
+            self.status_var.set("一括ダウンロードが一部失敗しました")
             lines = [f"{saved}件を保存しました。"]
             if skipped:
                 lines.append(f"処理中に保存済みとなった{skipped}件をスキップしました。")
             lines.append(f"{len(failures)}件を保存できませんでした。")
             lines.extend(f"{exam_id}: {message}" for exam_id, message in failures[:3])
-            messagebox.showwarning("検索結果を一括保存", "\n".join(lines))
+            messagebox.showwarning("検索結果を一括ダウンロード", "\n".join(lines))
             return
-        self.status_var.set("一括保存しました")
+        self.status_var.set("一括ダウンロードしました")
         message = f"{saved}件をローカルに保存しました。"
         if skipped:
             message += f"\n保存済み{skipped}件はスキップしました。"
-        messagebox.showinfo("検索結果を一括保存", message)
+        messagebox.showinfo("検索結果を一括ダウンロード", message)
 
     def fail_download(self, message):
         self.download_active = False
