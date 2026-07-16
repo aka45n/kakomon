@@ -57,6 +57,9 @@ SPECIALTY_GROUP_PAGES = {
     "理工化学科共通・分類不明": "工学部専門科目",
     "工業化学科共通・分類不明": "工学部専門科目",
 }
+SUBJECT_GROUP_OVERRIDES = {
+    "応用電磁気学": "工学部専門科目",
+}
 NATURAL_ROOT_PAGES = (
     "大学院授業科目",
     "大学院入試問題",
@@ -310,6 +313,9 @@ def parent_chain(page: dict, pages: dict[str, dict]) -> list[str]:
 
 
 def infer_group(page: dict) -> str:
+    subject_group = SUBJECT_GROUP_OVERRIDES.get(page.get("courseName", "").strip())
+    if subject_group:
+        return subject_group
     titles = page_ancestry_titles(page)
     for title in reversed(titles):
         if title in DIRECT_GROUP_PAGES:

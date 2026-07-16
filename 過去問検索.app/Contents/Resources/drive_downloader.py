@@ -39,6 +39,11 @@ def download_exam_file(exam_id):
     exam = next((item for item in exams if item.get("id") == exam_id), None)
     if not exam:
         raise ValueError("指定された過去問が見つかりません。")
+    existing_local_file = existing_local_file_path(exam)
+    if existing_local_file:
+        return {"localFile": exam["localFile"], "alreadyDownloaded": True}
+    if exam.get("sourceSite") == "手動追加" or str(exam.get("id", "")).startswith("manual-"):
+        raise ValueError("手動追加の過去問はDriveから保存できません。")
     if not exam.get("driveUrl"):
         raise ValueError("Google Driveリンクが登録されていません。")
 
@@ -53,6 +58,15 @@ def download_exam_file(exam_id):
     exam["localFile"] = f"./files/drive/{target.name}"
     write_exams(exams)
     return {"localFile": exam["localFile"]}
+
+
+def existing_local_file_path(exam):
+    local_file = exam.get("localFile")
+    if local_file in ("", "未保存", None):
+        return None
+    path = Path(local_file)
+    path = path if path.is_absolute() else ROOT / path
+    return path if path.exists() else None
 
 
 def download_page_group(exams, exam):

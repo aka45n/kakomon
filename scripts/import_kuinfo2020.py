@@ -313,6 +313,8 @@ def parse_kuinfo2020_folder_filename(file_item: dict, course_name: str) -> dict 
 
 
 def infer_term_from_context(course_name: str, text: str) -> str:
+    if course_name.strip() == "自然現象と数学":
+        return "前期"
     if re.search(r"(?:^|[\\s_/・-])A(?:$|[\\s_/・-])|Ⅰ|I$", course_name):
         return "前期"
     if re.search(r"(?:^|[\\s_/・-])B(?:$|[\\s_/・-])|Ⅱ|II$", course_name):

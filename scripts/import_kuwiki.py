@@ -87,37 +87,37 @@ FRONT_TERM_SUFFIXES = ("A", "Ⅰ", "I")
 BACK_TERM_SUFFIXES = ("B", "Ⅱ", "II")
 COURSE_GROUP_MAP = {
     "全学：自然": "自然群",
-    "理：物理": "自然群",
-    "工：物工": "自然群",
-    "理：化学": "自然群",
-    "理：生物": "自然群",
-    "理：数学": "自然群",
-    "理：地物": "自然群",
-    "工：共通": "自然群",
-    "理：境界": "自然群",
-    "理：宇物": "自然群",
-    "理：地鉱": "自然群",
-    "工：地球工": "自然群",
-    "工：工化": "自然群",
-    "農：森林": "自然群",
-    "農：応生": "自然群",
-    "工：電電": "自然群",
-    "農：資源": "自然群",
-    "農：共通": "自然群",
-    "工：建築": "自然群",
-    "農：食品": "自然群",
+    "理：物理": "理学部専門科目",
+    "工：物工": "工学部専門科目",
+    "理：化学": "理学部専門科目",
+    "理：生物": "理学部専門科目",
+    "理：数学": "理学部専門科目",
+    "理：地物": "理学部専門科目",
+    "工：共通": "工学部専門科目",
+    "理：境界": "理学部専門科目",
+    "理：宇物": "理学部専門科目",
+    "理：地鉱": "理学部専門科目",
+    "工：地球工": "工学部専門科目",
+    "工：工化": "工学部専門科目",
+    "農：森林": "農学部専門科目",
+    "農：応生": "農学部専門科目",
+    "工：電電": "工学部専門科目",
+    "農：資源": "農学部専門科目",
+    "農：共通": "農学部専門科目",
+    "工：建築": "工学部専門科目",
+    "農：食品": "農学部専門科目",
     "全学：人社": "人社群",
-    "教育：教職": "人社群",
-    "教育：心理": "人社群",
-    "法：法": "人社群",
-    "総人：総人": "人社群",
-    "文：文": "人社群",
-    "経済：経済": "人社群",
-    "教育：現教": "人社群",
+    "教育：教職": "教育学部専門科目",
+    "教育：心理": "教育学部専門科目",
+    "法：法": "法学部専門科目",
+    "総人：総人": "総合人間学部専門科目",
+    "文：文": "文学部専門科目",
+    "経済：経済": "経済学部専門科目",
+    "教育：現教": "教育学部専門科目",
     "全学：外国語": "外国語群",
     "全学：健康": "健康群",
     "全学：情報": "情報群",
-    "工：情報": "情報群",
+    "工：情報": "工学部専門科目",
     "全学：キャリア": "キャリア形成科目群",
     "全学：統合": "統合科学科目群",
 }
@@ -841,6 +841,8 @@ def is_non_teacher_paren(value: str) -> bool:
 def infer_term_from_subject(subject: str) -> str:
     normalized = re.sub(r"[（(［\[].*[）)］\]]$", "", subject).strip()
     normalized = re.sub(r"[（(［\[]+$", "", normalized).strip()
+    if normalized in ("自然現象と数学", "応用電磁気学"):
+        return "前期"
     if normalized.endswith(FRONT_TERM_SUFFIXES):
         return "前期"
     if normalized.endswith(BACK_TERM_SUFFIXES):
@@ -862,11 +864,18 @@ def build_exam(course: dict, file_item: dict, parsed: dict) -> dict:
         notes.append(f"ページ分割ファイル: {parsed['pageNumber']}ページ目")
     if parsed.get("multiYears"):
         notes.append(f"複数年度ファイル: {parsed['multiYears']}")
+    subject = parsed["subject"]
+    if course.get("field") == "全学：外国語":
+        subject = course.get("name", "").strip() or subject
+        re_enrollment = re.search(r"再履修[^）)]*", parsed["subject"])
+        if re_enrollment and "再履修" not in subject:
+            marker = re_enrollment.group(0)
+            subject = f"{subject[:-1]}・{marker})" if subject.endswith(")") else f"{subject}({marker})"
     exam = {
         "id": f"kuwiki-{file_item['id']}" + (f"-{parsed['idSuffix']}" if parsed.get("idSuffix") else ""),
         "year": parsed["year"],
         "teacher": parsed["teacher"],
-        "subject": parsed["subject"],
+        "subject": subject,
         "group": course_group(course.get("field", "")),
         "testType": parsed.get("testType", "定期テスト"),
         "sourceSite": "京大wiki",
