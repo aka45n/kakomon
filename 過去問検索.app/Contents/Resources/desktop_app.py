@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
@@ -68,6 +69,24 @@ DASH_VARIANTS = str.maketrans({
     "―": "－",
     "−": "－",
 })
+INPUT_SOURCE_SWITCH_KEYS = {
+    "Alt_L",
+    "Alt_R",
+    "Caps_Lock",
+    "Command_L",
+    "Command_R",
+    "Control_L",
+    "Control_R",
+    "ISO_Next_Group",
+    "Meta_L",
+    "Meta_R",
+    "Mode_switch",
+    "Option_L",
+    "Option_R",
+    "Super_L",
+    "Super_R",
+}
+INPUT_SOURCE_SPACE_GUARD_SECONDS = 0.5
 
 
 def year_sort_value(value):
@@ -273,6 +292,8 @@ class KakomonApp(tk.Tk):
         self.tree_headings = {}
         self.test_type_display_tick = 0
         self.download_active = False
+        self.input_source_space_guard_until = 0.0
+        self.input_source_space_guard_pending = False
 
         self.ensure_data_store()
         self.create_widgets()
@@ -567,12 +588,29 @@ class KakomonApp(tk.Tk):
             pass
 
     def ignore_input_source_switch_space(self, event):
-        # macOS/Tk can pass input-source switching shortcuts through as a space.
-        # Keep normal spaces, but drop spaces combined with modifier keys.
-        control_mask = 0x0004
-        option_or_command_mask = 0x0008 | 0x0010
-        if (event.keysym == "space" or event.char == " ") and event.state & (control_mask | option_or_command_mask):
-            return "break"
+        # macOS can deliver the input-source shortcut's space after modifier
+        # state has already disappeared. Arm a one-space guard on switch keys.
+        now = time.monotonic()
+        keysym = str(getattr(event, "keysym", ""))
+        char = str(getattr(event, "char", ""))
+        state = int(getattr(event, "state", 0) or 0)
+        modifier_mask = 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x0080
+
+        if keysym in INPUT_SOURCE_SWITCH_KEYS:
+            self.input_source_space_guard_pending = True
+            self.input_source_space_guard_until = now + INPUT_SOURCE_SPACE_GUARD_SECONDS
+            return None
+
+        if keysym == "space" or char == " ":
+            shortcut_space = bool(state & modifier_mask)
+            delayed_switch_space = self.input_source_space_guard_pending and now <= self.input_source_space_guard_until
+            if shortcut_space or delayed_switch_space:
+                self.input_source_space_guard_pending = False
+                return "break"
+            return None
+
+        if keysym:
+            self.input_source_space_guard_pending = False
         return None
 
     def guard_input_source_switch_space(self, widget):
@@ -1600,10 +1638,16 @@ class KakomonApp(tk.Tk):
         items = self.feedback_for_exam(exam_id)
         if not items:
             return "メモはまだありません。"
-        lines = []
-        for item in items:
-            lines.append(f"[{item.get('createdAt', '')}] {item.get('comment', '')}")
-        return "\n\n".join(lines)
+        return "\n".join(self.feedback_history_line(item) for item in items)
+
+    def feedback_history_line(self, item, prefix=""):
+        created_at = str(item.get("createdAt", "")).replace("T", " ")
+        comment = " / ".join(
+            line.strip()
+            for line in str(item.get("comment", "")).splitlines()
+            if line.strip()
+        )
+        return f"{prefix}{created_at}  {comment}".rstrip()
 
     def detail_feedback_text_for_exam(self, exam):
         lines = []
@@ -1611,8 +1655,8 @@ class KakomonApp(tk.Tk):
             page_label = f"{page.get('pageNumber')}ファイル目" if exam.get("pageGroup") else ""
             for item in self.feedback_for_exam(page["id"]):
                 prefix = f"{page_label} " if page_label else ""
-                lines.append(f"{prefix}[{item.get('createdAt', '')}] {item.get('comment', '')}")
-        return "\n\n".join(lines) if lines else "メモはまだありません。"
+                lines.append(self.feedback_history_line(item, prefix))
+        return "\n".join(lines) if lines else "メモはまだありません。"
 
     def save_detail_feedback(self, exam, text_widget, existing_widget):
         comment = text_widget.get("1.0", "end").strip()
