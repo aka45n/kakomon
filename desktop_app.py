@@ -108,6 +108,8 @@ def reverse_year_sort_value(value):
 
 
 def split_year_term(value):
+    if str(value).strip() == "不明":
+        return "不明", ""
     match = re.match(r"^(20\d{2})(前期|後期)$", str(value))
     if match:
         return match.group(1), match.group(2)
@@ -688,7 +690,12 @@ class KakomonApp(tk.Tk):
         return {exam.get(field, "") for exam in self.exams if exam.get(field)}
 
     def unique_year_values(self):
-        return {year for exam in self.exams for year in exam_years(exam) if year}
+        return {
+            year
+            for exam in self.exams
+            for year in exam_years(exam)
+            if re.fullmatch(r"(?:19|20)\d{2}(?:前期|後期)?", year)
+        }
 
     def reset_filters(self):
         keep_results_layout = self.main_frame.winfo_ismapped()
@@ -1257,10 +1264,23 @@ class KakomonApp(tk.Tk):
         return entry
 
     def validate_year_edit(self, proposed):
-        return bool(re.fullmatch(r"20\d{0,2}", proposed))
+        return proposed == "不明" or bool(re.fullmatch(r"20\d{0,2}", proposed))
+
+    def bind_term_availability(self, year_var, term_var, term_combo):
+        def update(*_):
+            if year_var.get().strip() == "不明":
+                term_var.set("")
+                term_combo.configure(state="disabled")
+            else:
+                term_combo.configure(state="readonly")
+
+        year_var.trace_add("write", update)
+        update()
 
     def protect_year_prefix(self, event):
         entry = event.widget
+        if not entry.get().startswith("20"):
+            return None
         try:
             selection_start = entry.index("sel.first")
             selection_end = entry.index("sel.last")
@@ -1276,8 +1296,10 @@ class KakomonApp(tk.Tk):
         return None
 
     def move_year_cursor_to_editable_part(self, event):
-        event.widget.icursor(2)
-        return "break"
+        if event.widget.get().startswith("20"):
+            event.widget.icursor(2)
+            return "break"
+        return None
 
     def keep_year_cursor_after_prefix_event(self, event):
         self.after_idle(lambda: self.keep_year_cursor_after_prefix(event.widget))
@@ -1285,7 +1307,7 @@ class KakomonApp(tk.Tk):
     def keep_year_cursor_after_prefix(self, entry):
         if not entry.winfo_exists():
             return
-        if entry.index("insert") < 2:
+        if entry.get().startswith("20") and entry.index("insert") < 2:
             entry.icursor(2)
 
     def add_form_row(self, parent, label, variable, row, browse_command=None):
@@ -1401,6 +1423,7 @@ class KakomonApp(tk.Tk):
         ttk.Label(form, text="過去問を編集", font=("", 20, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
         year_entry = self.add_year_row(form, values["year"], 1)
         term_combo = self.add_form_combo(form, "前期/後期", values["term"], 2, ("", *TERMS))
+        self.bind_term_availability(values["year"], values["term"], term_combo)
         teacher_entry = self.add_form_row(form, "教師名", values["teacher"], 3)
         subject_entry = self.add_form_row(form, "科目名", values["subject"], 4)
         group_combo = self.add_form_combo(form, "科目群", values["group"], 5, COURSE_GROUPS)
@@ -1444,6 +1467,8 @@ class KakomonApp(tk.Tk):
     def save_exam_edits(self, exam, values, notes_widget, window):
         year = values["year"].get().strip()
         term = values["term"].get().strip()
+        if year == "不明":
+            term = ""
         teacher = clean_teacher_name(values["teacher"].get())
         subject = normalize_hyphens(values["subject"].get()).strip()
         group = values["group"].get().strip()
@@ -1453,8 +1478,8 @@ class KakomonApp(tk.Tk):
         if not year or not subject or not group or not test_type:
             messagebox.showinfo("過去問検索", "年度、科目名、科目群、テスト種別は必須です。")
             return
-        if not re.fullmatch(r"20\d{2}", year):
-            messagebox.showinfo("過去問検索", "年度は20から始まる半角数字4桁で入力してください。")
+        if year != "不明" and not re.fullmatch(r"20\d{2}", year):
+            messagebox.showinfo("過去問検索", "年度は不明、または20から始まる半角数字4桁で入力してください。")
             return
         if test_number and not re.fullmatch(r"[1-9]\d*", test_number):
             messagebox.showinfo("過去問検索", "小テスト番号は半角数字で入力してください。")
@@ -1466,18 +1491,19 @@ class KakomonApp(tk.Tk):
             return
         before_snapshot = self.exam_edit_snapshot(target)
         old_local_file = target.get("localFile")
+        full_year = year if year == "不明" else f"{year}{term}"
         new_local_file = self.renamed_local_file_for_edit(
             target,
             subject,
             teacher,
-            f"{year}{term}",
+            full_year,
             test_type,
             test_number,
         )
         if new_local_file is None:
             return
         metadata_updates = {
-            "year": f"{year}{term}",
+            "year": full_year,
             "teacher": teacher,
             "subject": subject,
             "group": group,
