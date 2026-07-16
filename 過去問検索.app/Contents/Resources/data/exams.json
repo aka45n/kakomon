@@ -1202,20 +1202,8 @@
     "notes": "京都大学 / 京大wiki科目コード: LASH329 / 京大wiki分野: 全学：人社 / 京大wiki科目名: ギリシア語A / ファイル名: ギリシア語A(堀川)2017.txt"
   },
   {
-    "id": "ku1025-1-4u98L6LlY6b5GGNOEwZuZrkoOtdv2Ue",
-    "year": "不明",
-    "teacher": "",
-    "subject": "グラフ理論",
-    "group": "情報群",
-    "testType": "定期テスト",
-    "sourceSite": "KU1025",
-    "localFile": "未保存",
-    "driveUrl": "https://drive.google.com/file/d/1-4u98L6LlY6b5GGNOEwZuZrkoOtdv2Ue/view",
-    "notes": "京都大学 / KU1025ページ: グラフ理論 / KU1025 URL: https://ku1025.netlify.app/グラフ理論.html / ファイル名: グラフ理論(不明)年度不明.jpeg / KU1025親ページ: 情報学科専門科目"
-  },
-  {
     "id": "ku1025-1rAhYRUffn6BLiHp6j2xEHvgeq1jBjtkQ",
-    "year": "不明",
+    "year": "2016後期",
     "teacher": "宮崎",
     "subject": "グラフ理論",
     "group": "情報群",
@@ -8353,7 +8341,7 @@
   },
   {
     "id": "kuwiki-13NQd3MuK8NA1adwQIeGw8Fc0yTWA122J",
-    "year": "不明",
+    "year": "2023",
     "teacher": "中野・森・中川・他",
     "subject": "個体と集団の基礎生物学",
     "group": "自然群",
@@ -26191,7 +26179,7 @@
     "id": "kuwiki-1Nu5up6NUP43vSnfktpbsm9YkuMmai2Jg",
     "year": "不明",
     "teacher": "",
-    "subject": "微分積分学A(T1)",
+    "subject": "微分積分学A",
     "group": "自然群",
     "testType": "定期テスト",
     "sourceSite": "京大wiki",
@@ -33987,7 +33975,7 @@
   },
   {
     "id": "kuwiki-1S7pfuOsFDIAfRFbS9nHTNzJk4ZbDZNfs",
-    "year": "不明",
+    "year": "2017前期",
     "teacher": "磯・藤原",
     "subject": "数値計算の基礎",
     "group": "自然群",
@@ -69240,18 +69228,6 @@
     "notes": "京都大学 / 京大wiki科目コード: LASH364 / 京大wiki分野: 全学：人社 / 京大wiki科目名: 近代芸術論A / ファイル名: 近代芸術論A(並木)2015.pdf"
   },
   {
-    "id": "kuwiki-1tEhJEYG_ROgGOiOTB6vniIaWWBt_DfBp",
-    "year": "不明",
-    "teacher": "並木",
-    "subject": "近代芸術論B",
-    "group": "人社群",
-    "testType": "定期テスト",
-    "sourceSite": "京大wiki",
-    "localFile": "未保存",
-    "driveUrl": "https://drive.google.com/file/d/1tEhJEYG_ROgGOiOTB6vniIaWWBt_DfBp/view",
-    "notes": "京都大学 / 京大wiki科目コード: 未登録 / 京大wiki分野: 全学：人社 / 京大wiki科目名: 近代芸術論B / ファイル名: 近代芸術論B(並木)年度不明.jpg"
-  },
-  {
     "id": "kuwiki-1uOTEDC377Ag5TWFMU3fHQeAWRZsuiXD_",
     "year": "不明",
     "teacher": "並木",
@@ -75093,18 +75069,6 @@
     "notes": "京都大学 / 京大wiki科目コード: SCI3252 / 京大wiki分野: 理：物理 / 京大wiki科目名: 電磁気学C / ファイル名: 電磁気学4(田中)2012.pdf"
   },
   {
-    "id": "ku1025-19ms5w_WWITlq1ZgxSrdcGm9WjSG1vPIm",
-    "year": "不明",
-    "teacher": "",
-    "subject": "電磁気学A",
-    "group": "自然群",
-    "testType": "定期テスト",
-    "sourceSite": "KU1025",
-    "localFile": "未保存",
-    "driveUrl": "https://drive.google.com/file/d/19ms5w_WWITlq1ZgxSrdcGm9WjSG1vPIm/view",
-    "notes": "京都大学 / KU1025ページ: 他学部聴講 / KU1025 URL: https://ku1025.netlify.app/他学部聴講.html / ファイル名: 理・電磁気学A解答.pdf / KU1025親ページ:  / 年度・教師不明 / ファイル名末尾: 解答"
-  },
-  {
     "id": "kuwiki-15uOOEefOQtNOsbYfGD2Ml7TCilyddf_-",
     "year": "2014前期",
     "teacher": "田中",
@@ -77059,18 +77023,6 @@
     "localFile": "未保存",
     "driveUrl": "https://drive.google.com/file/d/1suxt25QMtvYA_WbTs2-z-Mwhl2ddcvFE/view",
     "notes": "京都大学 / 京大wiki科目コード: SCI2109 / 京大wiki分野: 理：数学 / 京大wiki科目名: 非線型解析入門 / ファイル名: 非線型解析入門(坂上)2024.pdf / 追試"
-  },
-  {
-    "id": "kuwiki-1JvlRSckZ9sfhpX7NPSU97AoEKCfZ26KL",
-    "year": "不明",
-    "teacher": "青柳",
-    "subject": "非線形動力学",
-    "group": "工学部専門科目",
-    "testType": "定期テスト",
-    "sourceSite": "京大wiki",
-    "localFile": "未保存",
-    "driveUrl": "https://drive.google.com/file/d/1JvlRSckZ9sfhpX7NPSU97AoEKCfZ26KL/view",
-    "notes": "京都大学 / 京大wiki科目コード: ENG9123 / 京大wiki分野: 工：情報 / 京大wiki科目名: 非線形動力学 / ファイル名: 非線形動力学(青柳)不明.pdf"
   },
   {
     "id": "kuinfo2020-11QkUBZWOg9gJ8PoPl9iUX79SVrAhC-BWyBgJBnIP_aE",
