@@ -34,6 +34,8 @@ COURSE_GROUPS = (
     "少人数教育科目群",
     "工学部専門科目",
     "理学部専門科目",
+    "法学部専門科目",
+    "農学部専門科目",
     "総合人間学部専門科目",
     "大学院科目",
 )
@@ -925,6 +927,7 @@ class KakomonApp(tk.Tk):
     def group_filtered_exams(self, exams):
         grouped = {}
         result = []
+        matching_ids = {exam.get("id") for exam in exams}
         for exam in exams:
             page_group = exam.get("pageGroup")
             if not page_group:
@@ -933,7 +936,10 @@ class KakomonApp(tk.Tk):
             if page_group in grouped:
                 continue
             pages = self.page_group_exams(exam)
-            representative = pages[0] if pages else exam
+            representative = next(
+                (page for page in pages if page.get("id") in matching_ids),
+                exam,
+            )
             grouped[page_group] = representative
             result.append(representative)
         return result
@@ -1617,7 +1623,7 @@ class KakomonApp(tk.Tk):
             rows.insert(5, ("小テスト番号", exam.get("testNumber")))
         for row, (label, value) in enumerate(rows):
             ttk.Label(info, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 12), pady=3)
-            ttk.Label(info, text=value, wraplength=560).grid(row=row, column=1, sticky="ew", pady=3)
+            self.add_selectable_info_value(info, value, row)
 
         feedback_box = ttk.LabelFrame(body, text="メモ", padding=12)
         feedback_box.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
@@ -1664,6 +1670,28 @@ class KakomonApp(tk.Tk):
         ).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(actions, text="閉じる", command=lambda: self.close_dialog(window)).grid(row=0, column=4, padx=(0, 8))
         window.after_idle(lambda: (window.focus_force(), new_feedback.focus_set()) if window.winfo_exists() else None)
+
+    def add_selectable_info_value(self, parent, value, row):
+        text = str(value)
+        line_count = sum(max(1, (len(line) + 54) // 55) for line in text.splitlines() or [""])
+        widget = tk.Text(
+            parent,
+            height=line_count,
+            width=1,
+            wrap="word",
+            font="TkDefaultFont",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
+            cursor="xterm",
+            background=self.cget("background"),
+        )
+        widget.insert("1.0", text)
+        widget.configure(state="disabled")
+        widget.grid(row=row, column=1, sticky="ew", pady=3)
+        return widget
 
     def detail_feedback_text(self, exam_id):
         items = self.feedback_for_exam(exam_id)
