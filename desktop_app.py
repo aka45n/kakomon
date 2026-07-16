@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import unicodedata
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
@@ -123,6 +124,10 @@ def normalize_group(value):
     return value
 
 
+def normalize_search_value(value):
+    return unicodedata.normalize("NFKC", str(value)).casefold()
+
+
 def normalize_hyphens(value):
     return str(value).translate(DASH_VARIANTS)
 
@@ -226,6 +231,36 @@ def exam_years(exam):
     return years or [exam.get("year", "")]
 
 
+def display_years(exam):
+    years = exam_years(exam)
+    individual_years = [year for year in years if not is_year_range(year)]
+    return individual_years or years
+
+
+def is_year_range(value):
+    return bool(re.match(r"^\d{4}\s*(?:-|－|〜|～)\s*\d{4}", normalize_hyphens(value)))
+
+
+def is_multi_year_source(exam):
+    return len(exam.get("alternateYears") or []) > 1 and is_year_range(exam.get("year", ""))
+
+
+def parse_page_spec(value):
+    pages = set()
+    for part in re.split(r"[,、，\s]+", str(value).strip()):
+        if not part:
+            continue
+        match = re.fullmatch(r"(\d+)(?:\s*[-－]\s*(\d+))?", normalize_hyphens(part))
+        if not match:
+            raise ValueError("ページ番号は 1-3,5 のように入力してください。")
+        start = int(match.group(1))
+        end = int(match.group(2) or start)
+        if start < 1 or end < start:
+            raise ValueError("ページ番号の範囲が正しくありません。")
+        pages.update(range(start, end + 1))
+    return sorted(pages)
+
+
 def latest_exam_year(exam):
     valid_years = [year for year in exam_years(exam) if year_sort_value(year) != (0, 0)]
     if not valid_years:
@@ -242,7 +277,7 @@ def reverse_latest_year_sort_value(exam):
 
 
 def display_year(exam, alternate_index=0):
-    years = exam_years(exam)
+    years = display_years(exam)
     return years[alternate_index % len(years)]
 
 
@@ -739,7 +774,7 @@ class KakomonApp(tk.Tk):
         self.filtered = [
             exam
             for exam in self.exams
-            if self.matches(exam)
+            if self.should_show_exam(exam) and self.matches(exam)
         ]
         self.filtered = self.group_filtered_exams(self.filtered)
         self.sort_filtered()
@@ -788,14 +823,18 @@ class KakomonApp(tk.Tk):
         self.main_frame.grid(row=0, column=1, sticky="nsew")
 
     def matches(self, exam):
-        subject_query = self.subject_query_var.get().strip().lower()
-        teacher_query = self.teacher_query_var.get().strip().lower()
+        subject_query = normalize_search_value(self.subject_query_var.get().strip())
+        teacher_query = normalize_search_value(self.teacher_query_var.get().strip())
         if subject_query:
-            subject = str(exam.get("subject", "")).lower()
-            aliases = {str(alias).strip().lower() for alias in exam.get("searchAliases", []) if str(alias).strip()}
+            subject = normalize_search_value(exam.get("subject", ""))
+            aliases = {
+                normalize_search_value(str(alias).strip())
+                for alias in exam.get("searchAliases", [])
+                if str(alias).strip()
+            }
             if subject_query not in subject and subject_query not in aliases:
                 return False
-        if teacher_query and teacher_query not in str(exam.get("teacher", "")).lower():
+        if teacher_query and teacher_query not in normalize_search_value(exam.get("teacher", "")):
             return False
         if self.year_var.get() and self.year_var.get() not in exam_years(exam):
             return False
@@ -806,6 +845,27 @@ class KakomonApp(tk.Tk):
         if self.source_site_filter_var.get() and exam.get("sourceSite", "") != self.source_site_filter_var.get():
             return False
         return True
+
+    def should_show_exam(self, exam):
+        return not (is_multi_year_source(exam) and self.multi_year_source_complete(exam))
+
+    def multi_year_records(self, exam):
+        return [
+            item
+            for item in self.exams
+            if item.get("derivedFromExamId") == exam.get("id")
+        ]
+
+    def downloaded_years_for_source(self, exam):
+        return {
+            item.get("year")
+            for item in self.multi_year_records(exam)
+            if item.get("year") and local_file_exists(item)
+        }
+
+    def multi_year_source_complete(self, exam):
+        expected = {str(year).strip() for year in exam.get("alternateYears") or [] if str(year).strip()}
+        return bool(expected) and expected.issubset(self.downloaded_years_for_source(exam))
 
     def sort_key_newest(self, exam):
         return (reverse_latest_year_sort_value(exam), exam.get("subject", ""), exam.get("teacher", ""), normalize_group(exam.get("group", "")), test_order_value(exam))
@@ -857,7 +917,10 @@ class KakomonApp(tk.Tk):
         return [
             exam
             for exam in self.filtered
-            if exam.get("driveUrl") and not local_file_exists(exam) and not self.is_manual_exam(exam)
+            if exam.get("driveUrl")
+            and not local_file_exists(exam)
+            and not self.is_manual_exam(exam)
+            and not is_multi_year_source(exam)
         ]
 
     def update_bulk_download_button(self):
@@ -871,7 +934,7 @@ class KakomonApp(tk.Tk):
         self.test_type_display_tick += 1
         for item_id in self.tree.get_children():
             exam = next((item for item in self.exams if item.get("id") == item_id), None)
-            if not exam or (len(exam_test_types(exam)) < 2 and len(exam_years(exam)) < 2):
+            if not exam or (len(exam_test_types(exam)) < 2 and len(display_years(exam)) < 2):
                 continue
             values = list(self.tree.item(item_id, "values"))
             if len(values) >= 5:
@@ -1897,7 +1960,7 @@ class KakomonApp(tk.Tk):
 
         window = tk.Toplevel(self)
         window.title(f"{exam.get('subject', '過去問')} - 詳細")
-        window.geometry("780x660")
+        window.geometry("780x760")
         window.minsize(640, 540)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(1, weight=1)
@@ -1943,7 +2006,7 @@ class KakomonApp(tk.Tk):
 
         existing = tk.Text(
             feedback_box,
-            height=7,
+            height=12,
             wrap="word",
             state="normal",
             relief="solid",
@@ -1957,13 +2020,19 @@ class KakomonApp(tk.Tk):
         existing.configure(state="disabled")
 
         ttk.Label(feedback_box, text="新しいメモ").grid(row=1, column=0, sticky="w", pady=(10, 4))
-        new_feedback = tk.Text(feedback_box, height=4, wrap="word", relief="solid", borderwidth=1, padx=8, pady=8)
+        new_feedback = ttk.Entry(feedback_box)
         self.guard_input_source_switch_space(new_feedback)
         new_feedback.grid(row=2, column=0, sticky="ew")
+
+        def submit_feedback(_event=None):
+            self.save_detail_feedback(exam, new_feedback, existing)
+            return "break"
+
+        new_feedback.bind("<Return>", submit_feedback)
         ttk.Button(
             feedback_box,
             text="メモを保存",
-            command=lambda: self.save_detail_feedback(exam, new_feedback, existing),
+            command=submit_feedback,
         ).grid(row=2, column=1, sticky="ns", padx=(10, 0))
 
         actions = ttk.Frame(window, padding=(16, 0, 16, 16))
@@ -2028,13 +2097,13 @@ class KakomonApp(tk.Tk):
                 lines.append(self.feedback_history_line(item, prefix))
         return "\n".join(lines) if lines else "メモはまだありません。"
 
-    def save_detail_feedback(self, exam, text_widget, existing_widget):
-        comment = text_widget.get("1.0", "end").strip()
+    def save_detail_feedback(self, exam, entry_widget, existing_widget):
+        comment = entry_widget.get().strip()
         if not comment:
             messagebox.showinfo("過去問検索", "保存するメモを入力してください。")
             return
         self.add_feedback(exam, comment)
-        text_widget.delete("1.0", "end")
+        entry_widget.delete(0, "end")
         existing_widget.configure(state="normal")
         existing_widget.delete("1.0", "end")
         existing_widget.insert("1.0", self.detail_feedback_text_for_exam(exam))
@@ -2042,9 +2111,41 @@ class KakomonApp(tk.Tk):
         self.render_table()
         self.update_selected_detail()
         self.status_var.set("メモを保存しました")
-        messagebox.showinfo("過去問検索", "メモを保存しました。")
+        self.show_enter_info("過去問検索", "メモを保存しました。", parent=entry_widget.winfo_toplevel())
+
+    def show_enter_info(self, title, message, parent=None):
+        parent = parent or self
+        window = tk.Toplevel(parent)
+        window.title(title)
+        window.geometry("340x130")
+        window.resizable(False, False)
+        window.transient(parent)
+        window.grab_set()
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+
+        ttk.Label(window, text=message, anchor="center").grid(
+            row=0,
+            column=0,
+            sticky="nsew",
+            padx=20,
+            pady=(20, 10),
+        )
+
+        def close(_event=None):
+            window.destroy()
+            return "break"
+
+        ok_button = ttk.Button(window, text="OK", command=close)
+        ok_button.grid(row=1, column=0, pady=(0, 16))
+        window.bind("<Return>", close)
+        window.bind("<KP_Enter>", close)
+        window.protocol("WM_DELETE_WINDOW", close)
+        ok_button.focus_set()
+        window.wait_window()
 
     def add_feedback(self, exam, comment):
+        comment = " ".join(str(comment).splitlines()).strip()
         now = datetime.now().isoformat(timespec="seconds")
         self.feedback.append({
             "id": f"feedback-{now}-{exam['id']}",
@@ -2137,6 +2238,84 @@ class KakomonApp(tk.Tk):
             return match.group(1).strip()
         return Path(exam.get("localFile") or "").name
 
+    def ask_year_page_mapping(self, exam):
+        downloaded_years = self.downloaded_years_for_source(exam)
+        years = [year for year in exam.get("alternateYears") or [] if year not in downloaded_years]
+        if not years:
+            messagebox.showinfo("過去問検索", "対象年度はすべて保存済みです。")
+            return None
+
+        window = tk.Toplevel(self)
+        window.title("年度ごとのページを指定")
+        window.geometry(f"500x{min(620, 150 + len(years) * 38)}")
+        window.minsize(460, 220)
+        window.transient(self)
+        window.grab_set()
+        window.columnconfigure(1, weight=1)
+
+        ttk.Label(window, text="年度").grid(row=0, column=0, sticky="w", padx=(16, 10), pady=(16, 6))
+        ttk.Label(window, text="対応するページ（例: 1-3,5）").grid(row=0, column=1, sticky="w", padx=(0, 16), pady=(16, 6))
+        entries = {}
+        for row, year in enumerate(years, start=1):
+            ttk.Label(window, text=year).grid(row=row, column=0, sticky="w", padx=(16, 10), pady=4)
+            entry = ttk.Entry(window)
+            self.guard_input_source_switch_space(entry)
+            entry.grid(row=row, column=1, sticky="ew", padx=(0, 16), pady=4)
+            entries[year] = entry
+
+        result = {"mapping": None}
+
+        def submit(_event=None):
+            mapping = {}
+            used_pages = {}
+            try:
+                for year, entry in entries.items():
+                    value = entry.get().strip()
+                    if not value:
+                        continue
+                    pages = parse_page_spec(value)
+                    if not pages:
+                        continue
+                    duplicate = next((page for page in pages if page in used_pages), None)
+                    if duplicate is not None:
+                        raise ValueError(f"{duplicate}ページ目が{used_pages[duplicate]}と{year}の両方に指定されています。")
+                    for page in pages:
+                        used_pages[page] = year
+                    mapping[year] = pages
+            except ValueError as error:
+                messagebox.showwarning("ページ指定を確認", str(error), parent=window)
+                return "break"
+            if not mapping:
+                messagebox.showinfo("ページ指定を確認", "保存する年度を1つ以上入力してください。", parent=window)
+                return "break"
+            result["mapping"] = mapping
+            window.destroy()
+            return "break"
+
+        buttons = ttk.Frame(window)
+        buttons.grid(row=len(years) + 1, column=0, columnspan=2, sticky="ew", padx=16, pady=16)
+        buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
+        ttk.Button(buttons, text="年度別に保存", command=submit).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(buttons, text="キャンセル", command=window.destroy).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        entry_list = list(entries.values())
+
+        def move_entry_focus(index, offset):
+            target_index = min(max(index + offset, 0), len(entry_list) - 1)
+            target = entry_list[target_index]
+            target.focus_set()
+            target.icursor("end")
+            return "break"
+
+        for index, entry in enumerate(entry_list):
+            entry.bind("<Return>", submit)
+            entry.bind("<Up>", lambda _event, row=index: move_entry_focus(row, -1))
+            entry.bind("<Down>", lambda _event, row=index: move_entry_focus(row, 1))
+        first_entry = entry_list[0]
+        first_entry.focus_set()
+        window.wait_window()
+        return result["mapping"]
+
     def download_exam_from_detail(self, exam, window):
         if self.download_active:
             messagebox.showinfo("過去問検索", "別の保存処理が進行中です。")
@@ -2150,27 +2329,40 @@ class KakomonApp(tk.Tk):
         if not exam.get("driveUrl"):
             messagebox.showinfo("過去問検索", "Google Driveリンクが登録されていません。")
             return
+        year_page_map = self.ask_year_page_mapping(exam) if is_multi_year_source(exam) else None
+        if is_multi_year_source(exam) and not year_page_map:
+            return
         self.status_var.set("Driveから保存中...")
         self.download_active = True
         self.update_bulk_download_button()
         self.download_button.configure(state="disabled")
-        thread = threading.Thread(target=self.download_detail_worker, args=(exam["id"], window), daemon=True)
+        thread = threading.Thread(
+            target=self.download_detail_worker,
+            args=(exam["id"], window, year_page_map),
+            daemon=True,
+        )
         thread.start()
 
-    def download_detail_worker(self, exam_id, window):
+    def download_detail_worker(self, exam_id, window, year_page_map=None):
         try:
-            result = download_exam_file(exam_id)
-            self.after(0, lambda: self.finish_detail_download(result["localFile"], window))
+            result = download_exam_file(exam_id, year_page_map)
+            self.after(0, lambda: self.finish_detail_download(result, window))
         except Exception as error:
             self.after(0, lambda: self.fail_download(str(error)))
 
-    def finish_detail_download(self, local_file, window):
+    def finish_detail_download(self, result, window):
         self.download_active = False
         self.load_data()
         self.apply_filters()
         self.status_var.set("保存しました")
-        messagebox.showinfo("過去問検索", f"ローカルに保存しました。\n{local_file}")
+        messagebox.showinfo("過去問検索", self.download_result_message(result))
         self.close_dialog(window)
+
+    def download_result_message(self, result):
+        local_files = result.get("localFiles") or [result["localFile"]]
+        if len(local_files) == 1:
+            return f"ローカルに保存しました。\n{local_files[0]}"
+        return f"年度別に{len(local_files)}件を保存しました。\n" + "\n".join(local_files)
 
     def open_preferred(self):
         exam = self.selected_exam()
@@ -2228,27 +2420,30 @@ class KakomonApp(tk.Tk):
         if not exam.get("driveUrl"):
             messagebox.showinfo("過去問検索", "Google Driveリンクが登録されていません。")
             return
+        year_page_map = self.ask_year_page_mapping(exam) if is_multi_year_source(exam) else None
+        if is_multi_year_source(exam) and not year_page_map:
+            return
 
         self.status_var.set("Driveから保存中...")
         self.download_active = True
         self.update_bulk_download_button()
         self.download_button.configure(state="disabled")
-        thread = threading.Thread(target=self.download_worker, args=(exam["id"],), daemon=True)
+        thread = threading.Thread(target=self.download_worker, args=(exam["id"], year_page_map), daemon=True)
         thread.start()
 
-    def download_worker(self, exam_id):
+    def download_worker(self, exam_id, year_page_map=None):
         try:
-            result = download_exam_file(exam_id)
-            self.after(0, lambda: self.finish_download(result["localFile"]))
+            result = download_exam_file(exam_id, year_page_map)
+            self.after(0, lambda: self.finish_download(result))
         except Exception as error:
             self.after(0, lambda: self.fail_download(str(error)))
 
-    def finish_download(self, local_file):
+    def finish_download(self, result):
         self.download_active = False
         self.load_data()
         self.apply_filters()
         self.status_var.set("保存しました")
-        messagebox.showinfo("過去問検索", f"ローカルに保存しました。\n{local_file}")
+        messagebox.showinfo("過去問検索", self.download_result_message(result))
 
     def download_filtered(self):
         if self.download_active:

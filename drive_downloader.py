@@ -31,7 +31,7 @@ CA_BUNDLE_CANDIDATES = (
 )
 
 
-def download_exam_file(exam_id):
+def download_exam_file(exam_id, year_page_map=None):
     if not exam_id:
         raise ValueError("過去問IDが指定されていません。")
 
@@ -39,6 +39,10 @@ def download_exam_file(exam_id):
     exam = next((item for item in exams if item.get("id") == exam_id), None)
     if not exam:
         raise ValueError("指定された過去問が見つかりません。")
+    if is_multi_year_source(exam):
+        if not year_page_map:
+            raise ValueError("年度ごとのページ割り当てが指定されていません。")
+        return download_multi_year_exam(exams, exam, year_page_map)
     existing_local_file = existing_local_file_path(exam)
     if existing_local_file:
         return {"localFile": exam["localFile"], "alreadyDownloaded": True}
@@ -58,6 +62,104 @@ def download_exam_file(exam_id):
     exam["localFile"] = f"./files/drive/{target.name}"
     write_exams(exams)
     return {"localFile": exam["localFile"]}
+
+
+def is_multi_year_source(exam):
+    return len(exam.get("alternateYears") or []) > 1 and bool(
+        re.match(r"^\d{4}\s*(?:-|－|〜|～)\s*\d{4}", normalize_hyphens(exam.get("year", "")))
+    )
+
+
+def download_multi_year_exam(exams, exam, year_page_map):
+    allowed_years = [str(year).strip() for year in exam.get("alternateYears") or [] if str(year).strip()]
+    downloaded_years = {
+        item.get("year")
+        for item in exams
+        if item.get("derivedFromExamId") == exam.get("id") and existing_local_file_path(item)
+    }
+    normalized_map = {}
+    used_pages = set()
+    for year, pages in year_page_map.items():
+        if year not in allowed_years:
+            raise ValueError(f"対象外の年度が指定されています: {year}")
+        if year in downloaded_years:
+            raise ValueError(f"{year}はすでに保存済みです。")
+        normalized_pages = sorted({int(page) for page in pages})
+        if not normalized_pages or normalized_pages[0] < 1:
+            raise ValueError(f"{year}のページ番号が正しくありません。")
+        duplicates = used_pages.intersection(normalized_pages)
+        if duplicates:
+            page_text = ", ".join(str(page) for page in sorted(duplicates))
+            raise ValueError(f"同じページが複数年度に指定されています: {page_text}")
+        used_pages.update(normalized_pages)
+        normalized_map[year] = normalized_pages
+
+    content, filename = download_drive_content(exam["driveUrl"])
+    suffix = downloaded_suffix(filename, exam)
+    if suffix != ".pdf":
+        raise ValueError("複数年度資料の年度別保存はPDFにのみ対応しています。")
+
+    PdfReader, PdfWriter = import_pypdf()
+    DRIVE_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    created_paths = []
+    created_records = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = Path(tmpdir) / "source.pdf"
+        source_path.write_bytes(content)
+        reader = PdfReader(str(source_path))
+        page_count = len(reader.pages)
+        invalid_pages = sorted(page for page in used_pages if page > page_count)
+        if invalid_pages:
+            page_text = ", ".join(str(page) for page in invalid_pages)
+            raise ValueError(f"PDFは{page_count}ページです。範囲外の指定があります: {page_text}")
+
+        try:
+            for year, pages in normalized_map.items():
+                record = build_year_exam_record(exam, year, pages)
+                target = unique_target_path(DRIVE_FILES_DIR / exam_filename(record, suffix=".pdf"))
+                writer = PdfWriter()
+                for page_number in pages:
+                    writer.add_page(reader.pages[page_number - 1])
+                with target.open("wb") as output:
+                    writer.write(output)
+                record["localFile"] = f"./files/drive/{target.name}"
+                created_paths.append(target)
+                created_records.append(record)
+        except Exception:
+            for path in created_paths:
+                path.unlink(missing_ok=True)
+            raise
+
+    for record in created_records:
+        existing = next((item for item in exams if item.get("id") == record["id"]), None)
+        if existing:
+            existing.update(record)
+        else:
+            exams.append(record)
+    write_exams(exams)
+    local_files = [record["localFile"] for record in created_records]
+    return {
+        "localFile": local_files[0],
+        "localFiles": local_files,
+        "createdExamIds": [record["id"] for record in created_records],
+    }
+
+
+def build_year_exam_record(source_exam, year, pages):
+    record = dict(source_exam)
+    record["id"] = f"{source_exam['id']}-year-{safe_path_part(year)}"
+    record["year"] = year
+    record["localFile"] = "未保存"
+    record["derivedFromExamId"] = source_exam["id"]
+    record["sourcePages"] = pages
+    record.pop("alternateYears", None)
+    record.pop("driveUrl", None)
+    record.pop("pageGroup", None)
+    record.pop("pageNumber", None)
+    page_text = ",".join(str(page) for page in pages)
+    note = f"複数年度資料から年度別に保存（元ID: {source_exam['id']} / ページ: {page_text}）"
+    record["notes"] = f"{source_exam.get('notes', '').rstrip()} / {note}".lstrip(" / ")
+    return record
 
 
 def existing_local_file_path(exam):
@@ -183,10 +285,15 @@ def import_pypdf():
     except ModuleNotFoundError:
         bundled_python_packages = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "python"
         if bundled_python_packages.exists():
-            sys.path.append(str(bundled_python_packages))
-            from pypdf import PdfReader, PdfWriter
+            for site_packages in bundled_python_packages.glob("lib/python*/site-packages"):
+                if str(site_packages) not in sys.path:
+                    sys.path.append(str(site_packages))
+            try:
+                from pypdf import PdfReader, PdfWriter
 
-            return PdfReader, PdfWriter
+                return PdfReader, PdfWriter
+            except ModuleNotFoundError:
+                pass
         raise ValueError("PDFページの結合には pypdf が必要です。") from None
 
 
