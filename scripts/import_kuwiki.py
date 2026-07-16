@@ -107,17 +107,17 @@ COURSE_GROUP_MAP = {
     "工：建築": "工学部専門科目",
     "農：食品": "農学部専門科目",
     "全学：人社": "人社群",
-    "教育：教職": "人社群",
-    "教育：心理": "人社群",
-    "法：法": "人社群",
-    "総人：総人": "人社群",
-    "文：文": "人社群",
-    "経済：経済": "人社群",
-    "教育：現教": "人社群",
+    "教育：教職": "教育学部専門科目",
+    "教育：心理": "教育学部専門科目",
+    "法：法": "法学部専門科目",
+    "総人：総人": "総合人間学部専門科目",
+    "文：文": "文学部専門科目",
+    "経済：経済": "経済学部専門科目",
+    "教育：現教": "教育学部専門科目",
     "全学：外国語": "外国語群",
     "全学：健康": "健康群",
     "全学：情報": "情報群",
-    "工：情報": "情報群",
+    "工：情報": "工学部専門科目",
     "全学：キャリア": "キャリア形成科目群",
     "全学：統合": "統合科学科目群",
 }
@@ -862,11 +862,18 @@ def build_exam(course: dict, file_item: dict, parsed: dict) -> dict:
         notes.append(f"ページ分割ファイル: {parsed['pageNumber']}ページ目")
     if parsed.get("multiYears"):
         notes.append(f"複数年度ファイル: {parsed['multiYears']}")
+    subject = parsed["subject"]
+    if course.get("field") == "全学：外国語":
+        subject = course.get("name", "").strip() or subject
+        re_enrollment = re.search(r"再履修[^）)]*", parsed["subject"])
+        if re_enrollment and "再履修" not in subject:
+            marker = re_enrollment.group(0)
+            subject = f"{subject[:-1]}・{marker})" if subject.endswith(")") else f"{subject}({marker})"
     exam = {
         "id": f"kuwiki-{file_item['id']}" + (f"-{parsed['idSuffix']}" if parsed.get("idSuffix") else ""),
         "year": parsed["year"],
         "teacher": parsed["teacher"],
-        "subject": parsed["subject"],
+        "subject": subject,
         "group": course_group(course.get("field", "")),
         "testType": parsed.get("testType", "定期テスト"),
         "sourceSite": "京大wiki",
