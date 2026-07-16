@@ -841,7 +841,7 @@ def is_non_teacher_paren(value: str) -> bool:
 def infer_term_from_subject(subject: str) -> str:
     normalized = re.sub(r"[（(［\[].*[）)］\]]$", "", subject).strip()
     normalized = re.sub(r"[（(［\[]+$", "", normalized).strip()
-    if normalized == "自然現象と数学":
+    if normalized in ("自然現象と数学", "応用電磁気学"):
         return "前期"
     if normalized.endswith(FRONT_TERM_SUFFIXES):
         return "前期"

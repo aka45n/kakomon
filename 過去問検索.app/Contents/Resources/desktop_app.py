@@ -786,8 +786,11 @@ class KakomonApp(tk.Tk):
     def matches(self, exam):
         subject_query = self.subject_query_var.get().strip().lower()
         teacher_query = self.teacher_query_var.get().strip().lower()
-        if subject_query and subject_query not in str(exam.get("subject", "")).lower():
-            return False
+        if subject_query:
+            subject = str(exam.get("subject", "")).lower()
+            aliases = {str(alias).strip().lower() for alias in exam.get("searchAliases", []) if str(alias).strip()}
+            if subject_query not in subject and subject_query not in aliases:
+                return False
         if teacher_query and teacher_query not in str(exam.get("teacher", "")).lower():
             return False
         if self.year_var.get() and self.year_var.get() not in exam_years(exam):
