@@ -10,7 +10,12 @@ import unicodedata
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DATA_PATH = ROOT / "data" / "syllabus_2026.json"
+DEFAULT_DATA_PATH = ROOT / "data" / "syllabus.json"
+DEFAULT_SYLLABUS_YEAR = "2026"
+
+
+def record_year(record: dict[str, str]) -> str:
+    return str(record.get("年度") or DEFAULT_SYLLABUS_YEAR)
 
 
 def normalize_search_text(value: str) -> str:
@@ -41,18 +46,26 @@ class SyllabusSearchEngine:
             )
             for record in records
         ]
+        self.years = sorted({record_year(record) for record in records}, reverse=True)
 
     @classmethod
     def from_json(cls, path: Path = DEFAULT_DATA_PATH) -> "SyllabusSearchEngine":
         return cls(json.loads(path.read_text(encoding="utf-8")))
 
-    def search(self, query: str, limit: int | None = None) -> list[dict[str, str]]:
+    def search(
+        self,
+        query: str,
+        limit: int | None = None,
+        year: str | None = None,
+    ) -> list[dict[str, str]]:
         normalized = normalize_search_text(query)
         if not normalized:
             return []
 
         hits = []
         for record, title, predecessor in self._indexed:
+            if year and record_year(record) != str(year):
+                continue
             match_target = title if normalized in title else predecessor
             if not match_target or normalized not in match_target:
                 continue
@@ -70,10 +83,10 @@ class SyllabusSearchEngine:
         records = [hit.record for hit in hits]
         return records[:limit] if limit is not None else records
 
-    def suggestions(self, query: str, limit: int = 8) -> list[str]:
+    def suggestions(self, query: str, limit: int = 8, year: str | None = None) -> list[str]:
         seen = set()
         suggestions = []
-        for record in self.search(query):
+        for record in self.search(query, year=year):
             title = record.get("授業科目名", "")
             if not title or title in seen:
                 continue
@@ -82,4 +95,3 @@ class SyllabusSearchEngine:
             if len(suggestions) >= limit:
                 break
         return suggestions
-

@@ -6,10 +6,10 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from syllabus_search import SyllabusSearchEngine
+from syllabus_search import SyllabusSearchEngine, record_year
 
 
-SYLLABUS_YEAR = "2026"
+ALL_YEARS_LABEL = "全年度"
 DETAIL_FIELDS = (
     "授業科目名",
     "担当者名",
@@ -31,17 +31,43 @@ class SyllabusSearchApp:
         self.root.minsize(760, 560)
 
         self.style = ttk.Style()
+        if "clam" in self.style.theme_names():
+            self.style.theme_use("clam")
+        self.style.configure(
+            "TButton",
+            background="#ffffff",
+            foreground="#16181d",
+            bordercolor="#d8dde5",
+            padding=(8, 5),
+        )
+        self.style.map(
+            "TButton",
+            background=[("active", "#fff4e8"), ("pressed", "#f9e1c7")],
+            foreground=[("active", "#16181d"), ("pressed", "#16181d")],
+        )
+        self.style.configure(
+            "TScrollbar",
+            background="#eef1f4",
+            troughcolor="#ffffff",
+            bordercolor="#ffffff",
+            arrowcolor="#596273",
+        )
         self.style.configure(
             "Treeview",
             background="#ffffff",
             fieldbackground="#ffffff",
             foreground="#111827",
             rowheight=27,
+            borderwidth=0,
         )
         self.style.configure(
             "Treeview.Heading",
-            background="#ffffff",
+            background="#f2f4f7",
             foreground="#111827",
+            bordercolor="#c9d0da",
+            lightcolor="#c9d0da",
+            darkcolor="#c9d0da",
+            relief="solid",
         )
         self.style.map(
             "Treeview",
@@ -57,6 +83,7 @@ class SyllabusSearchApp:
             raise
 
         self.query = tk.StringVar()
+        self.selected_year = tk.StringVar(value=ALL_YEARS_LABEL)
         self.status = tk.StringVar(value=f"全 {len(self.engine.records):,} 件")
         self.result_query = tk.StringVar()
         self.detail_values = {field: tk.StringVar(value="-") for field in DETAIL_FIELDS}
@@ -79,13 +106,55 @@ class SyllabusSearchApp:
             background="#ffffff",
         )
         search_content.grid(row=0, column=0, padx=40, pady=(110, 0), sticky="n")
+        header_row = tk.Frame(search_content, width=400, height=38, background="#ffffff")
+        header_row.pack(fill="x", pady=(0, 30))
+        header_row.pack_propagate(False)
         tk.Label(
-            search_content,
+            header_row,
             text="シラバス検索",
             background="#ffffff",
             foreground="#16181d",
             font=("TkDefaultFont", 28, "bold"),
-        ).pack(pady=(0, 30))
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        year_row = tk.Frame(search_content, background="#ffffff")
+        self.year_choices = [ALL_YEARS_LABEL, *self.engine.years]
+        self.year_selector = tk.Canvas(
+            year_row,
+            width=86,
+            height=24,
+            background="#ffffff",
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+        )
+        self.year_selector.pack(side="right")
+        self._rounded_rectangle(
+            self.year_selector,
+            1,
+            1,
+            85,
+            23,
+            radius=8,
+            fill="#ffffff",
+            outline="#d98a3a",
+            width=2,
+        )
+        self.year_selector_text = self.year_selector.create_text(
+            36,
+            11,
+            text=self.selected_year.get(),
+            fill="#16181d",
+            font=("TkDefaultFont", 11),
+        )
+        self.year_selector.create_polygon(68, 10, 74, 10, 71, 14, fill="#a85f19", outline="")
+        self.year_menu = tk.Menu(self.root, tearoff=False, font=("TkDefaultFont", 10))
+        for year in self.year_choices:
+            self.year_menu.add_command(
+                label=f"  {year}  ",
+                command=lambda selected=year: self._select_year(selected),
+            )
+        self.year_selector.bind("<Button-1>", self._show_year_menu)
+        year_row.pack(fill="x", pady=(0, 10))
         self.search_canvas = tk.Canvas(
             search_content,
             width=400,
@@ -136,7 +205,6 @@ class SyllabusSearchApp:
             anchor="w",
         )
         self.placeholder_label.bind("<Button-1>", self._focus_search_entry)
-
         self.suggestion_box = tk.Listbox(
             search_content,
             height=0,
@@ -193,7 +261,14 @@ class SyllabusSearchApp:
         content_pane.pack(fill="both", expand=True)
 
         columns = ("subject", "teacher", "group", "year", "term")
-        result_frame = tk.Frame(content_pane, background="#ffffff", padx=1, pady=1)
+        result_frame = tk.Frame(
+            content_pane,
+            background="#ffffff",
+            padx=1,
+            pady=1,
+            highlightbackground="#c9d0da",
+            highlightthickness=1,
+        )
         self.results = ttk.Treeview(result_frame, columns=columns, show="headings", height=12)
         self.results.heading("subject", text="科目名")
         self.results.heading("teacher", text="教師")
@@ -217,7 +292,7 @@ class SyllabusSearchApp:
             background="#ffffff",
             padx=14,
             pady=12,
-            highlightbackground="#dfe3e8",
+            highlightbackground="#c9d0da",
             highlightthickness=1,
         )
         tk.Label(
@@ -297,7 +372,7 @@ class SyllabusSearchApp:
             self.placeholder_window,
             state="hidden" if self.query.get() else "normal",
         )
-        suggestions = self.engine.suggestions(self.query.get())
+        suggestions = self.engine.suggestions(self.query.get(), year=self._selected_year_filter())
         self._clear_suggestion_hover()
         self.suggestion_box.delete(0, "end")
         if not suggestions:
@@ -335,10 +410,30 @@ class SyllabusSearchApp:
         self.suggestion_box.pack_forget()
         self._run_search()
 
+    def _on_year_changed(self, _event=None) -> None:
+        self._on_query_changed()
+
+    def _select_year(self, year: str) -> None:
+        self.selected_year.set(year)
+        self.year_selector.itemconfigure(self.year_selector_text, text=year)
+        self._on_year_changed()
+
+    def _show_year_menu(self, _event=None) -> None:
+        x = self.year_selector.winfo_rootx()
+        y = self.year_selector.winfo_rooty() + self.year_selector.winfo_height()
+        try:
+            self.year_menu.tk_popup(x, y)
+        finally:
+            self.year_menu.grab_release()
+
+    def _selected_year_filter(self) -> str | None:
+        year = self.selected_year.get()
+        return None if year == ALL_YEARS_LABEL else year
+
     def _run_search(self, _event=None) -> None:
         query = self.query.get().strip()
         self.suggestion_box.pack_forget()
-        self.visible_records = self.engine.search(query)
+        self.visible_records = self.engine.search(query, year=self._selected_year_filter())
         self.results.delete(*self.results.get_children())
         for index, record in enumerate(self.visible_records):
             self.results.insert(
@@ -349,12 +444,14 @@ class SyllabusSearchApp:
                     record.get("授業科目名", ""),
                     record.get("担当者名", ""),
                     record.get("群", ""),
-                    SYLLABUS_YEAR,
+                    record_year(record),
                     record.get("開講期", ""),
                 ),
             )
         self.status.set(f"{len(self.visible_records):,} 件ヒット" if query else f"全 {len(self.engine.records):,} 件")
-        self.result_query.set(f"「{query}」の検索結果")
+        year_label = self.selected_year.get()
+        prefix = "全年度" if year_label == ALL_YEARS_LABEL else f"{year_label}年度"
+        self.result_query.set(f"{prefix}「{query}」の検索結果")
         self._clear_detail()
         self._show_page(self.results_page)
 
@@ -364,7 +461,7 @@ class SyllabusSearchApp:
             return
         record = self.visible_records[int(selection[0])]
         for field in DETAIL_FIELDS:
-            value = SYLLABUS_YEAR if field == "年度" else record.get(field, "")
+            value = record_year(record) if field == "年度" else record.get(field, "")
             self.detail_values[field].set(value or "-")
 
     def _clear_detail(self) -> None:
